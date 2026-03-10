@@ -134,6 +134,7 @@ pub const GDK_KEY_bracketleft = raw.GDK_KEY_bracketleft;
 pub const GDK_KEY_bracketright = raw.GDK_KEY_bracketright;
 pub const gtk_widget_set_hexpand = raw.gtk_widget_set_hexpand;
 pub const gtk_widget_set_vexpand = raw.gtk_widget_set_vexpand;
+pub const gtk_widget_queue_resize = raw.gtk_widget_queue_resize;
 pub const gtk_widget_set_focusable = raw.gtk_widget_set_focusable;
 pub const gtk_widget_set_can_focus = raw.gtk_widget_set_can_focus;
 pub const gtk_widget_grab_focus = raw.gtk_widget_grab_focus;

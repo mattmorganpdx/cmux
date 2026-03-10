@@ -160,6 +160,9 @@ pub fn updateRow(self: *Sidebar, index: usize) void {
     // Replace the row's child with updated content
     const content = createRowContentBox(ws);
     c.gtk_list_box_row_set_child(row, asWidget(content));
+
+    // Force the row to recalculate its size after content change
+    c.gtk_widget_queue_resize(asWidget(row));
 }
 
 // ------------------------------------------------------------------
@@ -247,17 +250,23 @@ fn createRowContentBox(ws: *const Workspace) *c.GtkBox {
 
     // Progress bar (if active)
     if (ws.progress > 0.0) {
-        const progress_bar: *c.GtkProgressBar = @ptrCast(@alignCast(c.gtk_progress_bar_new()));
-        c.gtk_progress_bar_set_fraction(progress_bar, ws.progress);
-        if (ws.getProgressLabel()) |label| {
-            var label_z: [129]u8 = undefined;
-            const label_len = @min(label.len, 128);
-            @memcpy(label_z[0..label_len], label[0..label_len]);
-            label_z[label_len] = 0;
-            c.gtk_progress_bar_set_text(progress_bar, &label_z);
-            c.gtk_progress_bar_set_show_text(progress_bar, 1);
+        const maybe_widget = c.gtk_progress_bar_new();
+        if (maybe_widget) |pw| {
+            const progress_bar: *c.GtkProgressBar = @ptrCast(@alignCast(pw));
+            const fraction: f64 = @floatCast(ws.progress);
+            c.gtk_progress_bar_set_fraction(progress_bar, fraction);
+            if (ws.getProgressLabel()) |label| {
+                var label_z: [129]u8 = undefined;
+                const label_len = @min(label.len, 128);
+                @memcpy(label_z[0..label_len], label[0..label_len]);
+                label_z[label_len] = 0;
+                c.gtk_progress_bar_set_text(progress_bar, &label_z);
+                c.gtk_progress_bar_set_show_text(progress_bar, 1);
+            }
+            c.gtk_widget_set_hexpand(asWidget(progress_bar), 1);
+            c.gtk_widget_set_size_request(asWidget(progress_bar), -1, 10);
+            c.gtk_box_append(vbox, asWidget(progress_bar));
         }
-        c.gtk_box_append(vbox, asWidget(progress_bar));
     }
 
     // Last log entry (if any)
