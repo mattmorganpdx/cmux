@@ -4,6 +4,7 @@ const App = @import("app.zig");
 const Window = @import("window.zig");
 const Server = @import("socket/server.zig");
 const shortcuts = @import("shortcuts.zig");
+const session = @import("session.zig");
 
 const log = std.log.scoped(.main);
 
@@ -37,6 +38,19 @@ pub fn main() !void {
         @ptrCast(std.os.argv.ptr),
     );
 
+    // Save session before cleanup
+    if (global_window) |window| {
+        const alloc = std.heap.c_allocator;
+        if (session.captureSession(alloc, &window.tab_manager)) |snap| {
+            defer session.freeSessionSnapshot(alloc, &snap);
+            session.writeSessionFile(alloc, &snap) catch |err| {
+                log.warn("Failed to save session on exit: {}", .{err});
+            };
+        } else |err| {
+            log.warn("Failed to capture session on exit: {}", .{err});
+        }
+    }
+
     // Cleanup
     if (global_server) |server| {
         server.deinit();
@@ -67,11 +81,28 @@ fn onActivate(gtk_app: *c.GtkApplication, _: c.gpointer) callconv(.c) void {
     if (global_window != null) return;
 
     const app = global_app orelse return;
-    const window = Window.create(gtk_app, app) catch |err| {
-        log.err("Failed to create window: {}", .{err});
-        return;
+
+    // Try to restore session from disk
+    const window = blk: {
+        if (!session.isRestoreDisabled()) {
+            if (session.loadSessionFile(std.heap.c_allocator)) |snap| {
+                if (Window.createFromSession(gtk_app, app, &snap)) |w| {
+                    log.info("Session restored ({d} workspaces)", .{snap.workspaces.len});
+                    break :blk w;
+                } else |err| {
+                    log.warn("Session restore failed, starting fresh: {}", .{err});
+                }
+            } else |_| {}
+        }
+        break :blk Window.create(gtk_app, app) catch |err| {
+            log.err("Failed to create window: {}", .{err});
+            return;
+        };
     };
     global_window = window;
+
+    // Start autosave timer (every 8 seconds)
+    _ = c.g_timeout_add_seconds(8, &session.onAutosave, @as(c.gpointer, @ptrCast(window)));
 
     // Install keyboard shortcuts
     shortcuts.install(window);

@@ -6,6 +6,7 @@ const PaneTree = @import("pane_tree.zig");
 const TabManager = @import("tab_manager.zig");
 const Workspace = @import("workspace.zig");
 const Sidebar = @import("sidebar.zig");
+const session = @import("session.zig");
 
 const log = std.log.scoped(.window);
 
@@ -111,6 +112,102 @@ pub fn create(gtk_app: *c.GtkApplication, app: *App) !*Window {
 
     log.info("Window created with sidebar", .{});
 
+    return self;
+}
+
+/// Create a window and restore state from a session snapshot.
+pub fn createFromSession(gtk_app: *c.GtkApplication, app: *App, snap: *const session.SessionSnapshot) !*Window {
+    const alloc = std.heap.c_allocator;
+
+    // Create the application window (same setup as create)
+    const gtk_window: *c.GtkApplicationWindow = @ptrCast(
+        c.gtk_application_window_new(gtk_app) orelse
+            return error.WindowCreateFailed,
+    );
+
+    c.gtk_window_set_title(@ptrCast(gtk_window), "cmux");
+    c.gtk_window_set_default_size(@ptrCast(gtk_window), 1100, 700);
+
+    const main_hbox: *c.GtkBox = @ptrCast(c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0));
+    c.gtk_widget_set_hexpand(@as(*c.GtkWidget, @ptrCast(main_hbox)), 1);
+    c.gtk_widget_set_vexpand(@as(*c.GtkWidget, @ptrCast(main_hbox)), 1);
+
+    const content_box: *c.GtkBox = @ptrCast(c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0));
+    c.gtk_widget_set_hexpand(@as(*c.GtkWidget, @ptrCast(content_box)), 1);
+    c.gtk_widget_set_vexpand(@as(*c.GtkWidget, @ptrCast(content_box)), 1);
+
+    var self = try alloc.create(Window);
+    self.* = .{
+        .gtk_window = gtk_window,
+        .app = app,
+        .tab_manager = TabManager.init(alloc),
+        .pane_widgets = std.AutoHashMap(PaneTree.NodeId, *TerminalWidget).init(alloc),
+        .node_widgets = std.AutoHashMap(PaneTree.NodeId, *c.GtkWidget).init(alloc),
+        .content_box = content_box,
+        .sidebar = undefined,
+        .alloc = alloc,
+    };
+
+    const sidebar = try Sidebar.create(alloc, &self.tab_manager);
+    sidebar.setSelectCallback(onSidebarSelect, @ptrCast(self));
+    self.sidebar = sidebar;
+
+    const sidebar_sep: *c.GtkSeparator = @ptrCast(@alignCast(c.gtk_separator_new(c.GTK_ORIENTATION_VERTICAL)));
+
+    c.gtk_box_append(main_hbox, sidebar.widget());
+    c.gtk_box_append(main_hbox, @ptrCast(@alignCast(sidebar_sep)));
+    c.gtk_box_append(main_hbox, @as(*c.GtkWidget, @ptrCast(content_box)));
+    c.gtk_window_set_child(@ptrCast(gtk_window), @ptrCast(main_hbox));
+
+    // Restore workspaces from snapshot
+    if (snap.workspaces.len == 0) {
+        // No workspaces in snapshot — create a default one
+        const ws = try self.tab_manager.createWorkspace();
+        try self.buildWorkspaceWidgets(ws);
+    } else {
+        for (snap.workspaces) |*ws_snap| {
+            const ws = try alloc.create(Workspace);
+            ws.* = Workspace.init(alloc, ws_snap.id);
+            ws.setTitle(ws_snap.title);
+            if (ws_snap.cwd.len > 0) ws.setCwd(ws_snap.cwd);
+            ws.pinned = ws_snap.pinned;
+
+            // Restore pane tree layout
+            _ = session.restorePaneTree(&ws.pane_tree, ws_snap) catch |err| {
+                log.warn("Failed to restore pane tree for workspace {d}: {}", .{ ws_snap.id, err });
+                // Fall back to a fresh root pane
+                _ = ws.pane_tree.createRoot() catch {};
+            };
+
+            try self.tab_manager.workspaces.append(alloc, ws);
+        }
+
+        // Restore tab manager state
+        self.tab_manager.next_id = snap.next_workspace_id;
+        self.tab_manager.selected_index = if (snap.selected_workspace_index) |idx|
+            if (idx < self.tab_manager.workspaces.items.len) idx else 0
+        else
+            0;
+
+        // Build widgets for the selected workspace
+        if (self.tab_manager.selectedWorkspace()) |ws| {
+            try self.buildWorkspaceWidgets(ws);
+        }
+    }
+
+    self.sidebar.rebuild();
+    c.gtk_window_present(@ptrCast(gtk_window));
+
+    // Focus the first terminal in the selected workspace
+    if (self.tab_manager.selectedWorkspace()) |ws| {
+        if (ws.pane_tree.focused_pane) |pane_id| {
+            if (self.pane_widgets.get(pane_id)) |tw| {
+                _ = c.gtk_widget_grab_focus(tw.widget());
+            }
+        }
+    }
+
+    log.info("Window created from session ({d} workspaces)", .{snap.workspaces.len});
     return self;
 }
 

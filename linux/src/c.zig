@@ -154,6 +154,7 @@ pub const g_object_ref = raw.g_object_ref;
 pub const g_object_unref = raw.g_object_unref;
 pub const g_signal_connect_data = raw.g_signal_connect_data;
 pub const g_idle_add = raw.g_idle_add;
+pub const g_timeout_add_seconds = raw.g_timeout_add_seconds;
 pub const g_error_free = raw.g_error_free;
 pub const g_free = raw.g_free;
 pub const GAsyncResult = raw.GAsyncResult;
