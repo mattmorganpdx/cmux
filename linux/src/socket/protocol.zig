@@ -51,6 +51,35 @@ pub const Request = struct {
         return alloc.dupe(u8, val.string) catch null;
     }
 
+    /// Get a boolean parameter from the params JSON.
+    pub fn getBoolParam(self: *const Request, alloc: Allocator, key: []const u8) ?bool {
+        const parsed = std.json.parseFromSlice(std.json.Value, alloc, self.raw_line, .{}) catch return null;
+        defer parsed.deinit();
+        if (parsed.value != .object) return null;
+        const params = parsed.value.object.get("params") orelse return null;
+        if (params != .object) return null;
+        const val = params.object.get(key) orelse return null;
+        return switch (val) {
+            .bool => val.bool,
+            else => null,
+        };
+    }
+
+    /// Get a float parameter from the params JSON.
+    pub fn getFloatParam(self: *const Request, alloc: Allocator, key: []const u8) ?f64 {
+        const parsed = std.json.parseFromSlice(std.json.Value, alloc, self.raw_line, .{}) catch return null;
+        defer parsed.deinit();
+        if (parsed.value != .object) return null;
+        const params = parsed.value.object.get("params") orelse return null;
+        if (params != .object) return null;
+        const val = params.object.get(key) orelse return null;
+        return switch (val) {
+            .float => val.float,
+            .integer => @floatFromInt(val.integer),
+            else => null,
+        };
+    }
+
     /// Get an integer parameter from the params JSON.
     pub fn getIntParam(self: *const Request, alloc: Allocator, key: []const u8) ?i64 {
         const parsed = std.json.parseFromSlice(std.json.Value, alloc, self.raw_line, .{}) catch return null;

@@ -75,43 +75,39 @@ So this roadmap is written from the perspective of an AI agent who is both the b
 
 ## The Dogfooding Roadmap
 
-### Priority 1: "Can I use this terminal at all?" (Basic Usability)
+### Priority 1: "Can I use this terminal at all?" (Basic Usability) ✅ COMPLETE
 
-These are blockers for anyone — human or AI — trying to use cmux as a daily terminal.
+All basic usability items are implemented and working.
 
-- [ ] **Clipboard read (paste)** — Currently a no-op. I can copy FROM the terminal but can't paste INTO it. For an agent, `send_text` is the primary input path, but clipboard paste is essential for human users.
+- [x] **Clipboard read (paste)** — Full GDK4 async clipboard with proper threading (g_idle_add dispatch from Ghostty thread to GTK main thread). Supports both standard (Ctrl+Shift+V) and primary selection (middle-click).
 
-- [ ] **Ghostty action callbacks** — Only `RENDER` is handled. At minimum:
-  - `set_title` — so workspace/pane titles reflect what's running (shell prompt, `vim`, etc.)
-  - `close_surface` — so Ghostty-initiated closes (e.g., `exit` in shell) actually remove the pane
-  - `new_split` — so Ghostty's own split key bindings work
-  - `cell_size` — needed for proper resize behavior
+- [x] **Ghostty action callbacks** — Implemented `set_title`, `close_surface`, `new_split`, `cell_size`, `pwd`, `close_window`. All dispatched to GTK main thread via g_idle_add.
 
-- [ ] **Working directory per terminal** — The field exists but is ignored. New splits and workspaces should inherit the parent's cwd.
+- [x] **Working directory per terminal** — Workspace stores cwd in a buffer. New splits and workspaces inherit parent's cwd. Ghostty's PWD action callback feeds cwd updates.
 
-- [ ] **Socket `workspace.select` GTK widget switching** — Right now selecting a workspace via socket/CLI updates the data model but doesn't actually switch the visible GTK widgets. This means I can't drive the UI from the socket.
+- [x] **Socket `workspace.select` GTK widget switching** — Socket handlers now dispatch GTK widget operations (select, create, close) to the main thread via g_idle_add.
 
-- [ ] **Split divider positioning** — Currently hardcoded to `0.5 * 480px`. Should read actual GTK allocation so splits look correct at any window size.
+- [x] **Split divider positioning** — Uses GtkPaned `realize` signal to query actual widget allocation and set proportional divider position.
 
-### Priority 2: "Can I drive this programmatically?" (Agent Essentials)
+### Priority 2: "Can I drive this programmatically?" (Agent Essentials) ✅ COMPLETE
 
-These are what I specifically need to use cmux as my own development environment.
+All agent essential socket methods are implemented. Total API methods: 25.
 
-- [ ] **`surface.read_text`** — Read the current terminal content back. Without this, I can send commands but can't see the output through the socket. This is THE critical loop-closing feature for agent use.
+- [x] **`surface.read_text`** — Reads terminal content via `ghostty_surface_read_text`. Uses `std.Thread.ResetEvent` to synchronously dispatch to GTK main thread. Supports `scrollback` param for full scrollback buffer.
 
-- [ ] **`surface.split` via socket** — Create splits programmatically. Currently I'd need keyboard shortcuts.
+- [x] **`surface.split` via socket** — Creates splits with `direction` param (left/right/up/down). Dispatches `window.splitFocused()` via g_idle_add.
 
-- [ ] **`surface.close` via socket** — Close panes programmatically.
+- [x] **`surface.close` via socket** — Closes focused pane via socket. Guards against closing last pane.
 
-- [ ] **`surface.send_key` via socket** — Send individual keystrokes (Ctrl+C, Ctrl+D, arrow keys, etc.) — essential for interacting with interactive programs.
+- [x] **`surface.send_key` via socket** — Sends named keystrokes (ctrl-c, enter, tab, arrow keys, escape, etc.) via `ghostty_surface_binding_action` with escape sequences.
 
-- [ ] **`pane.resize` via socket** — The data model supports it, just needs a socket handler.
+- [x] **`pane.resize` via socket** — Adjusts split divider position. New `Window.syncDividerPositions` method updates GtkPaned widgets to match data model.
 
-- [ ] **`pane.swap` via socket** — Same — data model ready, needs handler.
+- [x] **`pane.swap` via socket** — Swaps two panes. New `Window.rebuildCurrentWorkspace` rebuilds GTK widget tree reusing existing TerminalWidget instances.
 
-- [ ] **`workspace.next` / `workspace.previous` / `workspace.last` via socket** — Quick navigation without knowing workspace IDs.
+- [x] **`workspace.next` / `workspace.previous` / `workspace.last` via socket** — Quick navigation reusing existing WorkspaceSwitchCtx pattern and TabManager methods.
 
-- [ ] **Environment variables per surface** — `CMUX_SOCKET_PATH`, `CMUX_WORKSPACE_ID`, `CMUX_SURFACE_ID` so scripts inside terminals know where they are.
+- [x] **Environment variables per surface** — New terminals get `CMUX_SURFACE_ID`, `CMUX_WORKSPACE_ID`, `CMUX_SOCKET_PATH` via `ghostty_env_var_s` in surface config.
 
 ### Priority 3: "Can I maintain state across sessions?" (Persistence)
 
@@ -195,6 +191,6 @@ These are significant features from macOS that would be valuable but aren't bloc
 
 ## Current State
 
-As of 2026-03-09: The Linux port builds cleanly, runs on X11, renders terminals via Ghostty's OpenGL renderer, supports split panes and multiple workspaces with sidebar navigation, has a working socket API with 16 methods, and a CLI tool. Two significant bugs were fixed this session (GTK-CRITICAL render errors and send_text not executing commands). All code is committed on the `matt/port-to-linux` branch.
+As of 2026-03-10: The Linux port builds cleanly, runs on X11, renders terminals via Ghostty's OpenGL renderer, supports split panes and multiple workspaces with sidebar navigation, has a working socket API with 25 methods, and a CLI tool. Priority 1 (basic usability) and Priority 2 (agent essentials) are complete. An AI agent can now read terminal output, send commands and keystrokes, create/close splits, navigate workspaces, resize/swap panes, and discover its own terminal context via environment variables — all through the socket API.
 
-The honest assessment: we're ~15-20% of the way to full macOS feature parity, but we're at maybe ~60% of the way to "an AI agent could start dogfooding this as a development environment" — which is the more interesting milestone.
+The honest assessment: we're ~20-25% of the way to full macOS feature parity, but we're at ~80% of the way to "an AI agent could start dogfooding this as a development environment." Priority 3 (persistence) and Priority 4 (observability) are next.

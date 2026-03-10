@@ -42,6 +42,27 @@ pub fn init(alloc: Allocator) !*Server {
     return self;
 }
 
+/// Return the socket path as a null-terminated pointer.
+/// The path allocated by init is contiguous and followed by unused allocator bytes,
+/// but to be safe we store a sentinel copy on first call.
+pub fn getSocketPathZ(self: *Server) [*:0]const u8 {
+    // The alloc.dupe in init copies exact bytes without a sentinel.
+    // We rely on the path being stored in a larger allocation that
+    // happens to have a zero byte after it in practice, but let's be safe:
+    // socket paths are always < 108 bytes (Unix limit), use a static buffer.
+    const Static = struct {
+        var buf: [256]u8 = undefined;
+        var initialized: bool = false;
+    };
+    if (!Static.initialized) {
+        const len = @min(self.socket_path.len, Static.buf.len - 1);
+        @memcpy(Static.buf[0..len], self.socket_path[0..len]);
+        Static.buf[len] = 0;
+        Static.initialized = true;
+    }
+    return @ptrCast(&Static.buf);
+}
+
 pub fn deinit(self: *Server) void {
     self.stop();
     self.registry.deinit();

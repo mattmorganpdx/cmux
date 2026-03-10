@@ -22,6 +22,11 @@ realized: bool = false,
 /// Working directory for this terminal, passed to Ghostty on realize.
 working_directory: ?[*:0]const u8 = null,
 
+/// Environment variable info for the surface (set at creation time).
+pane_id: ?u64 = null,
+workspace_id: ?u64 = null,
+socket_path: ?[*:0]const u8 = null,
+
 /// Global registry mapping ghostty_surface_t → *TerminalWidget.
 /// Used by the action callback to look up widgets without relying on
 /// ghostty_surface_userdata pointer interpretation.
@@ -34,7 +39,13 @@ pub fn fromSurface(surface: c.ghostty_surface_t) ?*TerminalWidget {
 }
 
 /// Create a new terminal widget backed by a GtkGLArea + Ghostty surface.
-pub fn create(app: *App, working_directory: ?[*:0]const u8) !*TerminalWidget {
+pub fn create(
+    app: *App,
+    working_directory: ?[*:0]const u8,
+    pane_id: ?u64,
+    workspace_id: ?u64,
+    socket_path: ?[*:0]const u8,
+) !*TerminalWidget {
     const alloc = std.heap.c_allocator;
 
     // Create the GtkGLArea
@@ -64,6 +75,9 @@ pub fn create(app: *App, working_directory: ?[*:0]const u8) !*TerminalWidget {
         .gl_area = gl_area,
         .surface = null,
         .app = app,
+        .pane_id = pane_id,
+        .workspace_id = workspace_id,
+        .socket_path = socket_path,
     };
 
     // Connect signals
@@ -239,6 +253,33 @@ fn onRealize(gl_area: *c.GtkGLArea, userdata: c.gpointer) callconv(.c) void {
     surface_config.scale_factor = scale;
     surface_config.userdata = @ptrCast(self);
     surface_config.working_directory = self.working_directory;
+
+    // Set environment variables so scripts know which terminal they're in
+    var env_vars_buf: [3]c.ghostty_env_var_s = undefined;
+    var env_count: usize = 0;
+    var surface_id_buf: [32]u8 = undefined;
+    var workspace_id_buf: [32]u8 = undefined;
+
+    if (self.pane_id) |pid| {
+        if (std.fmt.bufPrintZ(&surface_id_buf, "{d}", .{pid})) |id_str| {
+            env_vars_buf[env_count] = .{ .key = "CMUX_SURFACE_ID", .value = id_str.ptr };
+            env_count += 1;
+        } else |_| {}
+    }
+    if (self.workspace_id) |wid| {
+        if (std.fmt.bufPrintZ(&workspace_id_buf, "{d}", .{wid})) |id_str| {
+            env_vars_buf[env_count] = .{ .key = "CMUX_WORKSPACE_ID", .value = id_str.ptr };
+            env_count += 1;
+        } else |_| {}
+    }
+    if (self.socket_path) |sp| {
+        env_vars_buf[env_count] = .{ .key = "CMUX_SOCKET_PATH", .value = sp };
+        env_count += 1;
+    }
+    if (env_count > 0) {
+        surface_config.env_vars = &env_vars_buf;
+        surface_config.env_var_count = env_count;
+    }
 
     // Create the Ghostty surface
     self.surface = c.ghostty_surface_new(self.app.ghostty_app, &surface_config);

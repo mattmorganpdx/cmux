@@ -218,6 +218,20 @@ pub const ghostty_surface_userdata = raw.ghostty_surface_userdata;
 pub const ghostty_surface_binding_action = raw.ghostty_surface_binding_action;
 pub const ghostty_surface_complete_clipboard_request = raw.ghostty_surface_complete_clipboard_request;
 
+// Text reading types and functions
+pub const ghostty_text_s = raw.ghostty_text_s;
+pub const ghostty_selection_s = raw.ghostty_selection_s;
+pub const ghostty_point_s = raw.ghostty_point_s;
+pub const ghostty_point_tag_e = raw.ghostty_point_tag_e;
+pub const ghostty_point_coord_e = raw.ghostty_point_coord_e;
+pub const ghostty_surface_read_text = raw.ghostty_surface_read_text;
+pub const ghostty_surface_free_text = raw.ghostty_surface_free_text;
+pub const ghostty_surface_has_selection = raw.ghostty_surface_has_selection;
+pub const ghostty_surface_read_selection = raw.ghostty_surface_read_selection;
+
+// Environment variable type
+pub const ghostty_env_var_s = raw.ghostty_env_var_s;
+
 // Ghostty constants
 pub const GHOSTTY_SUCCESS = raw.GHOSTTY_SUCCESS;
 pub const GHOSTTY_PLATFORM_LINUX = raw.GHOSTTY_PLATFORM_LINUX;
@@ -250,3 +264,12 @@ pub const GHOSTTY_MOUSE_RELEASE = raw.GHOSTTY_MOUSE_RELEASE;
 pub const GHOSTTY_MOUSE_MOMENTUM_NONE = raw.GHOSTTY_MOUSE_MOMENTUM_NONE;
 pub const GHOSTTY_ACTION_PRESS = raw.GHOSTTY_ACTION_PRESS;
 pub const GHOSTTY_ACTION_RELEASE = raw.GHOSTTY_ACTION_RELEASE;
+
+// Point tag and coord constants
+pub const GHOSTTY_POINT_VIEWPORT = raw.GHOSTTY_POINT_VIEWPORT;
+pub const GHOSTTY_POINT_SCREEN = raw.GHOSTTY_POINT_SCREEN;
+pub const GHOSTTY_POINT_ACTIVE = raw.GHOSTTY_POINT_ACTIVE;
+pub const GHOSTTY_POINT_SURFACE = raw.GHOSTTY_POINT_SURFACE;
+pub const GHOSTTY_POINT_COORD_EXACT = raw.GHOSTTY_POINT_COORD_EXACT;
+pub const GHOSTTY_POINT_COORD_TOP_LEFT = raw.GHOSTTY_POINT_COORD_TOP_LEFT;
+pub const GHOSTTY_POINT_COORD_BOTTOM_RIGHT = raw.GHOSTTY_POINT_COORD_BOTTOM_RIGHT;
