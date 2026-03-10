@@ -8,6 +8,7 @@
 const raw = @cImport({
     @cInclude("gtk/gtk.h");
     @cInclude("ghostty.h");
+    @cInclude("libnotify/notify.h");
 });
 
 // Re-export all C declarations so callers use `c.symbol_name`.
@@ -97,6 +98,13 @@ pub const GTK_POLICY_NEVER = raw.GTK_POLICY_NEVER;
 pub const GTK_POLICY_AUTOMATIC = raw.GTK_POLICY_AUTOMATIC;
 pub const GTK_SELECTION_SINGLE = raw.GTK_SELECTION_SINGLE;
 pub const gtk_list_box_set_selection_mode = raw.gtk_list_box_set_selection_mode;
+
+// GtkProgressBar
+pub const GtkProgressBar = raw.GtkProgressBar;
+pub const gtk_progress_bar_new = raw.gtk_progress_bar_new;
+pub const gtk_progress_bar_set_fraction = raw.gtk_progress_bar_set_fraction;
+pub const gtk_progress_bar_set_text = raw.gtk_progress_bar_set_text;
+pub const gtk_progress_bar_set_show_text = raw.gtk_progress_bar_set_show_text;
 
 // Pango
 pub const PANGO_ELLIPSIZE_END = raw.PANGO_ELLIPSIZE_END;
@@ -274,3 +282,9 @@ pub const GHOSTTY_POINT_SURFACE = raw.GHOSTTY_POINT_SURFACE;
 pub const GHOSTTY_POINT_COORD_EXACT = raw.GHOSTTY_POINT_COORD_EXACT;
 pub const GHOSTTY_POINT_COORD_TOP_LEFT = raw.GHOSTTY_POINT_COORD_TOP_LEFT;
 pub const GHOSTTY_POINT_COORD_BOTTOM_RIGHT = raw.GHOSTTY_POINT_COORD_BOTTOM_RIGHT;
+
+// libnotify
+pub const notify_init = raw.notify_init;
+pub const notify_uninit = raw.notify_uninit;
+pub const notify_notification_new = raw.notify_notification_new;
+pub const notify_notification_show = raw.notify_notification_show;

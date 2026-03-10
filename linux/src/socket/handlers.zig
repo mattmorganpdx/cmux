@@ -70,6 +70,26 @@ pub fn dispatch(alloc: Allocator, server: *Server, req: *const protocol.Request)
         return handleSurfaceClose(alloc, server, req);
     }
 
+    // Workspace metadata methods
+    if (std.mem.eql(u8, req.method, "workspace.report_git")) {
+        return handleWorkspaceReportGit(alloc, server, req);
+    }
+    if (std.mem.eql(u8, req.method, "workspace.set_status")) {
+        return handleWorkspaceSetStatus(alloc, server, req);
+    }
+    if (std.mem.eql(u8, req.method, "workspace.clear_status")) {
+        return handleWorkspaceClearStatus(alloc, server, req);
+    }
+    if (std.mem.eql(u8, req.method, "workspace.add_log")) {
+        return handleWorkspaceAddLog(alloc, server, req);
+    }
+    if (std.mem.eql(u8, req.method, "workspace.clear_log")) {
+        return handleWorkspaceClearLog(alloc, server, req);
+    }
+    if (std.mem.eql(u8, req.method, "workspace.set_progress")) {
+        return handleWorkspaceSetProgress(alloc, server, req);
+    }
+
     // Workspace navigation
     if (std.mem.eql(u8, req.method, "workspace.next")) {
         return handleWorkspaceNext(alloc, server, req);
@@ -98,6 +118,17 @@ pub fn dispatch(alloc: Allocator, server: *Server, req: *const protocol.Request)
     }
     if (std.mem.eql(u8, req.method, "window.current")) {
         return handleWindowCurrent(alloc, server, req);
+    }
+
+    // Notification methods
+    if (std.mem.eql(u8, req.method, "notification.create")) {
+        return handleNotificationCreate(alloc, server, req);
+    }
+    if (std.mem.eql(u8, req.method, "notification.list")) {
+        return handleNotificationList(alloc, server, req);
+    }
+    if (std.mem.eql(u8, req.method, "notification.clear")) {
+        return handleNotificationClear(alloc, server, req);
     }
 
     return protocol.errorResponse(alloc, req.id, "method_not_found", req.method);
@@ -196,9 +227,11 @@ fn handleSystemCapabilities(alloc: Allocator, req: *const protocol.Request) ![]c
         \\{"methods":["system.ping","system.identify","system.capabilities","system.tree",
         \\"workspace.list","workspace.create","workspace.current","workspace.select","workspace.close","workspace.rename",
         \\"workspace.next","workspace.previous","workspace.last",
+        \\"workspace.report_git","workspace.set_status","workspace.clear_status","workspace.add_log","workspace.clear_log","workspace.set_progress",
         \\"surface.list","surface.send_text","surface.current","surface.read_text","surface.send_key","surface.split","surface.close",
         \\"pane.list","pane.resize","pane.swap",
-        \\"window.list","window.current"]}
+        \\"window.list","window.current",
+        \\"notification.create","notification.list","notification.clear"]}
     ;
     return protocol.successResponse(alloc, req.id, methods);
 }
@@ -285,8 +318,31 @@ fn workspaceToJson(alloc: Allocator, ws: *const Workspace, is_selected: bool, in
     }
     defer if (branch_alloc) alloc.free(branch_json);
 
+    // Build status_entries as JSON object
+    const status_json = try buildStatusJson(alloc, ws);
+    defer alloc.free(status_json);
+
+    // Build log_entries as JSON array
+    const log_json = try buildLogJson(alloc, ws);
+    defer alloc.free(log_json);
+
+    // Build progress label
+    var progress_label_json: []const u8 = "null";
+    var progress_label_alloc = false;
+    if (ws.getProgressLabel()) |label| {
+        const escaped = try jsonEscapeString(alloc, label);
+        defer alloc.free(escaped);
+        progress_label_json = try std.fmt.allocPrint(alloc, "\"{s}\"", .{escaped});
+        progress_label_alloc = true;
+    }
+    defer if (progress_label_alloc) alloc.free(progress_label_json);
+
+    // Format progress as fixed-point to avoid scientific notation
+    var progress_buf: [16]u8 = undefined;
+    const progress_str = std.fmt.bufPrint(&progress_buf, "{d:.2}", .{ws.progress}) catch "0.00";
+
     return std.fmt.allocPrint(alloc,
-        \\{{"id":{d},"ref":"workspace:{d}","title":"{s}","index":{d},"selected":{s},"pinned":{s},"pane_count":{d},"git_branch":{s}}}
+        \\{{"id":{d},"ref":"workspace:{d}","title":"{s}","index":{d},"selected":{s},"pinned":{s},"pane_count":{d},"git_branch":{s},"git_dirty":{s},"status_entries":{s},"log_entries":{s},"progress":{s},"progress_label":{s}}}
     , .{
         ws.id,
         ws.id,
@@ -296,7 +352,66 @@ fn workspaceToJson(alloc: Allocator, ws: *const Workspace, is_selected: bool, in
         if (ws.pinned) "true" else "false",
         ws.paneCount(),
         branch_json,
+        if (ws.git_dirty) "true" else "false",
+        status_json,
+        log_json,
+        progress_str,
+        progress_label_json,
     });
+}
+
+fn buildStatusJson(alloc: Allocator, ws: *const Workspace) ![]const u8 {
+    if (ws.status_count == 0) return try alloc.dupe(u8, "{}");
+
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(alloc);
+    try buf.append(alloc, '{');
+
+    var iter = ws.statusIterator();
+    var first = true;
+    while (iter.next()) |entry| {
+        if (!first) try buf.append(alloc, ',');
+        first = false;
+        try buf.append(alloc, '"');
+        const key_esc = try jsonEscapeString(alloc, entry.key);
+        defer alloc.free(key_esc);
+        try buf.appendSlice(alloc, key_esc);
+        try buf.appendSlice(alloc, "\":\"");
+        const val_esc = try jsonEscapeString(alloc, entry.value);
+        defer alloc.free(val_esc);
+        try buf.appendSlice(alloc, val_esc);
+        try buf.append(alloc, '"');
+    }
+    try buf.append(alloc, '}');
+    return buf.toOwnedSlice(alloc);
+}
+
+fn buildLogJson(alloc: Allocator, ws: *const Workspace) ![]const u8 {
+    if (ws.log_count == 0) return try alloc.dupe(u8, "[]");
+
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(alloc);
+    try buf.append(alloc, '[');
+
+    // Walk log_buf entries (null-separated)
+    var pos: usize = 0;
+    var first = true;
+    while (pos < ws.log_len) {
+        const start = pos;
+        while (pos < ws.log_len and ws.log_buf[pos] != 0) : (pos += 1) {}
+        const entry = ws.log_buf[start..pos];
+        pos += 1; // skip null
+
+        if (!first) try buf.append(alloc, ',');
+        first = false;
+        try buf.append(alloc, '"');
+        const esc = try jsonEscapeString(alloc, entry);
+        defer alloc.free(esc);
+        try buf.appendSlice(alloc, esc);
+        try buf.append(alloc, '"');
+    }
+    try buf.append(alloc, ']');
+    return buf.toOwnedSlice(alloc);
 }
 
 fn handleWorkspaceList(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
@@ -548,6 +663,149 @@ fn handleWorkspaceRename(alloc: Allocator, server: *Server, req: *const protocol
     }
 
     return protocol.errorResponse(alloc, req.id, "not_found", "Workspace not found");
+}
+
+// ------------------------------------------------------------------
+// Workspace metadata handlers
+// ------------------------------------------------------------------
+
+/// Helper: find a workspace by id param, or fall back to current workspace.
+fn resolveWorkspace(server: *Server, alloc: Allocator, req: *const protocol.Request) ?*Workspace {
+    const window = server.window orelse return null;
+    if (req.getIntParam(alloc, "id")) |id| {
+        return window.tab_manager.findById(@intCast(id));
+    }
+    return window.tab_manager.selectedWorkspace();
+}
+
+/// Helper: find the index of a workspace in the tab manager.
+fn workspaceIndex(server: *Server, ws: *const Workspace) ?usize {
+    const window = server.window orelse return null;
+    for (window.tab_manager.workspaces.items, 0..) |w, i| {
+        if (w.id == ws.id) return i;
+    }
+    return null;
+}
+
+/// Context for scheduling a sidebar row update on the GTK main thread.
+const SidebarUpdateCtx = struct {
+    window: *Window,
+    index: usize,
+};
+
+fn doSidebarUpdate(userdata: c.gpointer) callconv(.c) c.gboolean {
+    const ctx: *SidebarUpdateCtx = @ptrCast(@alignCast(userdata));
+    defer std.heap.c_allocator.destroy(ctx);
+    ctx.window.sidebar.updateRow(ctx.index);
+    return c.G_SOURCE_REMOVE;
+}
+
+/// Schedule a sidebar row update for the given workspace.
+fn scheduleSidebarUpdate(server: *Server, ws: *const Workspace) void {
+    const window = server.window orelse return;
+    const idx = workspaceIndex(server, ws) orelse return;
+    const ctx = std.heap.c_allocator.create(SidebarUpdateCtx) catch return;
+    ctx.* = .{ .window = window, .index = idx };
+    _ = c.g_idle_add(&doSidebarUpdate, @ptrCast(ctx));
+}
+
+fn handleWorkspaceReportGit(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const ws = resolveWorkspace(server, alloc, req) orelse {
+        return protocol.errorResponse(alloc, req.id, "not_found", "Workspace not found");
+    };
+
+    const branch = req.getStringParam(alloc, "branch") orelse {
+        return protocol.errorResponse(alloc, req.id, "missing_param", "Requires 'branch' parameter");
+    };
+    defer alloc.free(branch);
+
+    ws.setGitBranch(branch);
+
+    if (req.getBoolParam(alloc, "dirty")) |dirty| {
+        ws.setGitDirty(dirty);
+    }
+
+    scheduleSidebarUpdate(server, ws);
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+fn handleWorkspaceSetStatus(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const ws = resolveWorkspace(server, alloc, req) orelse {
+        return protocol.errorResponse(alloc, req.id, "not_found", "Workspace not found");
+    };
+
+    const key = req.getStringParam(alloc, "key") orelse {
+        return protocol.errorResponse(alloc, req.id, "missing_param", "Requires 'key' parameter");
+    };
+    defer alloc.free(key);
+
+    const value = req.getStringParam(alloc, "value") orelse {
+        return protocol.errorResponse(alloc, req.id, "missing_param", "Requires 'value' parameter");
+    };
+    defer alloc.free(value);
+
+    ws.setStatusEntry(key, value);
+    scheduleSidebarUpdate(server, ws);
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+fn handleWorkspaceClearStatus(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const ws = resolveWorkspace(server, alloc, req) orelse {
+        return protocol.errorResponse(alloc, req.id, "not_found", "Workspace not found");
+    };
+
+    // Optional key param: clear one entry or all
+    if (req.getStringParam(alloc, "key")) |key| {
+        defer alloc.free(key);
+        ws.removeStatusEntry(key);
+    } else {
+        ws.clearStatus();
+    }
+
+    scheduleSidebarUpdate(server, ws);
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+fn handleWorkspaceAddLog(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const ws = resolveWorkspace(server, alloc, req) orelse {
+        return protocol.errorResponse(alloc, req.id, "not_found", "Workspace not found");
+    };
+
+    const text = req.getStringParam(alloc, "text") orelse {
+        return protocol.errorResponse(alloc, req.id, "missing_param", "Requires 'text' parameter");
+    };
+    defer alloc.free(text);
+
+    ws.addLogEntry(text);
+    scheduleSidebarUpdate(server, ws);
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+fn handleWorkspaceClearLog(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const ws = resolveWorkspace(server, alloc, req) orelse {
+        return protocol.errorResponse(alloc, req.id, "not_found", "Workspace not found");
+    };
+
+    ws.clearLog();
+    scheduleSidebarUpdate(server, ws);
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+fn handleWorkspaceSetProgress(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const ws = resolveWorkspace(server, alloc, req) orelse {
+        return protocol.errorResponse(alloc, req.id, "not_found", "Workspace not found");
+    };
+
+    const fraction = req.getFloatParam(alloc, "fraction") orelse {
+        return protocol.errorResponse(alloc, req.id, "missing_param", "Requires 'fraction' parameter");
+    };
+
+    const label = req.getStringParam(alloc, "label");
+    defer if (label) |l| alloc.free(l);
+
+    ws.setProgress(@floatCast(fraction), label);
+    scheduleSidebarUpdate(server, ws);
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
 }
 
 // ------------------------------------------------------------------
@@ -1405,4 +1663,78 @@ fn handleWindowCurrent(alloc: Allocator, server: *Server, req: *const protocol.R
     , .{ws_count});
     defer alloc.free(result);
     return protocol.successResponse(alloc, req.id, result);
+}
+
+// ------------------------------------------------------------------
+// Notification handlers
+// ------------------------------------------------------------------
+
+fn handleNotificationCreate(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const title = req.getStringParam(alloc, "title") orelse {
+        return protocol.errorResponse(alloc, req.id, "missing_param", "Requires 'title' parameter");
+    };
+    defer alloc.free(title);
+
+    const body = req.getStringParam(alloc, "body");
+    defer if (body) |b| alloc.free(b);
+
+    const id = server.notification_store.add(title, body);
+
+    const result = try std.fmt.allocPrint(alloc,
+        \\{{"notification":{{"id":{d}}}}}
+    , .{id});
+    defer alloc.free(result);
+    return protocol.successResponse(alloc, req.id, result);
+}
+
+fn handleNotificationList(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const notifications = try server.notification_store.list(alloc);
+    defer if (notifications.len > 0) alloc.free(notifications);
+
+    var array = JsonArrayBuilder.init(alloc);
+    defer array.deinit();
+    try array.startArray();
+
+    for (notifications) |notif| {
+        if (notif.id == 0) continue; // Skip tombstones
+
+        const title_esc = try jsonEscapeString(alloc, notif.title[0..notif.title_len]);
+        defer alloc.free(title_esc);
+
+        var body_json: []const u8 = "null";
+        var body_alloc = false;
+        if (notif.body_len > 0) {
+            const body_esc = try jsonEscapeString(alloc, notif.body[0..notif.body_len]);
+            defer alloc.free(body_esc);
+            body_json = try std.fmt.allocPrint(alloc, "\"{s}\"", .{body_esc});
+            body_alloc = true;
+        }
+        defer if (body_alloc) alloc.free(body_json);
+
+        const n_json = try std.fmt.allocPrint(alloc,
+            \\{{"id":{d},"title":"{s}","body":{s},"timestamp":{d}}}
+        , .{ notif.id, title_esc, body_json, notif.timestamp });
+        defer alloc.free(n_json);
+        try array.addRaw(n_json);
+    }
+
+    try array.endArray();
+    const list_json = try array.toOwnedSlice();
+    defer alloc.free(list_json);
+
+    const result = try std.fmt.allocPrint(alloc,
+        \\{{"notifications":{s}}}
+    , .{list_json});
+    defer alloc.free(result);
+    return protocol.successResponse(alloc, req.id, result);
+}
+
+fn handleNotificationClear(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const id = req.getIntParam(alloc, "id");
+    if (id) |notif_id| {
+        server.notification_store.clear(@intCast(notif_id));
+    } else {
+        server.notification_store.clear(null);
+    }
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
 }

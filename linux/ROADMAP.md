@@ -119,22 +119,32 @@ All persistence items are implemented and working.
 
 - [x] **Ghostty config integration** — Ghostty's own config system loads `~/.config/ghostty/config` automatically via `ghostty_config_load_default_files` in `app.zig`. Fonts, colors, and themes are applied to all surfaces without additional code. No further integration needed for basic use.
 
-### Priority 4: "Can I stay aware of what's happening?" (Observability)
+### Priority 4: "Can I stay aware of what's happening?" (Observability) ✅ COMPLETE
 
-- [ ] **Shell integration scripts** — Bash and Zsh scripts that hook into the prompt to:
-  - `report_pwd` — current working directory per terminal
-  - `report_git_branch` — current git branch for sidebar display
-  - Set `CMUX_*` environment variables
+All observability items are implemented and working. Total API methods: 34.
 
-- [ ] **Sidebar richness** — The macOS sidebar shows git branch, PR info, status metadata, log entries, progress bars, and listening ports. For Linux, start with:
-  - Git branch display (fed by shell integration)
-  - Status metadata (key-value pairs via socket)
-  - Log entries (arbitrary text via socket)
-  - Progress bar (0-100% via socket)
+- [x] **Shell integration scripts** — Bash (`cmux-bash-integration.bash`) and Zsh (`cmux-zsh-integration.zsh`) scripts that hook into the prompt cycle. Report git branch and dirty status to cmux via V2 JSON-RPC over the Unix socket. Only send when values change (deduplication). Activate automatically when `CMUX_WORKSPACE_ID` is set.
 
-- [ ] **Desktop notifications** — Via libnotify on Linux. Notify when commands finish, builds fail, etc.
+- [x] **Sidebar richness** — Enhanced workspace sidebar rows now show:
+  - Git branch with dirty indicator (`main *` for dirty, `main` for clean)
+  - Status metadata entries (`key: value | key: value` format)
+  - GtkProgressBar with optional label (fraction 0.0-1.0)
+  - Most recent log entry (prefixed with `>`)
+  - Each row dynamically renders only the metadata that exists
 
-- [ ] **Notification socket methods** — `notification.create`, `notification.list`, `notification.clear`
+- [x] **Workspace metadata socket methods** — 6 new methods:
+  - `workspace.report_git` — set git branch + dirty flag
+  - `workspace.set_status` / `workspace.clear_status` — key-value status entries
+  - `workspace.add_log` / `workspace.clear_log` — log entry ring buffer
+  - `workspace.set_progress` — progress bar (0=hidden, 0.01-1.0=visible) with optional label
+  - All methods trigger sidebar row update via `g_idle_add`
+
+- [x] **Desktop notifications** — Via libnotify on Linux. `notify_init`/`notify_uninit` lifecycle in main.zig.
+
+- [x] **Notification socket methods** — 3 new methods:
+  - `notification.create` — store + show desktop notification via libnotify
+  - `notification.list` — list stored notifications (64-entry ring buffer, most recent first)
+  - `notification.clear` — clear one or all notifications
 
 ### Priority 5: "Can I organize complex workflows?" (Power Features)
 
@@ -191,6 +201,6 @@ These are significant features from macOS that would be valuable but aren't bloc
 
 ## Current State
 
-As of 2026-03-10: The Linux port builds cleanly, runs on X11, renders terminals via Ghostty's OpenGL renderer, supports split panes and multiple workspaces with sidebar navigation, has a working socket API with 25 methods, and a CLI tool. Priorities 1-3 (basic usability, agent essentials, session persistence) are complete. An AI agent can read terminal output, send commands and keystrokes, create/close splits, navigate workspaces, resize/swap panes, discover its own terminal context via environment variables, and have its workspace layout survive restarts — all through the socket API. Session state (workspaces, titles, cwds, pane trees with splits) auto-saves every 8 seconds and restores on launch.
+As of 2026-03-10: The Linux port builds cleanly, runs on X11, renders terminals via Ghostty's OpenGL renderer, supports split panes and multiple workspaces with sidebar navigation, has a working socket API with 34 methods, a CLI tool, shell integration scripts, and desktop notifications via libnotify. Priorities 1-4 (basic usability, agent essentials, session persistence, observability) are complete. An AI agent can read terminal output, send commands and keystrokes, create/close splits, navigate workspaces, resize/swap panes, discover its own terminal context via environment variables, have its workspace layout survive restarts, feed metadata (git branch, status, progress, logs) into the sidebar, and receive desktop notifications — all through the socket API.
 
-The honest assessment: we're ~25-30% of the way to full macOS feature parity, but we're at ~85% of the way to "an AI agent could start dogfooding this as a development environment." Priority 4 (observability) is next.
+The honest assessment: we're ~30-35% of the way to full macOS feature parity, but we're at ~90% of the way to "an AI agent could start dogfooding this as a development environment." Priority 5 (power features) is next.

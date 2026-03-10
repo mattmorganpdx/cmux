@@ -62,6 +62,8 @@ pub fn main() !void {
         global_app = null;
     }
 
+    c.notify_uninit();
+
     if (status != 0) {
         log.err("Application exited with status {}", .{status});
         return error.ApplicationFailed;
@@ -69,6 +71,9 @@ pub fn main() !void {
 }
 
 fn onActivate(gtk_app: *c.GtkApplication, _: c.gpointer) callconv(.c) void {
+    // Initialize libnotify for desktop notifications
+    _ = c.notify_init("cmux");
+
     // Initialize the Ghostty backend on first activation
     if (global_app == null) {
         global_app = App.init() catch |err| {

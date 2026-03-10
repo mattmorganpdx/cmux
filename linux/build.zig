@@ -24,6 +24,9 @@ pub fn build(b: *std.Build) void {
     exe.addIncludePath(b.path("ghostty-lib"));
     exe.linkSystemLibrary2("ghostty", .{});
 
+    // Link libnotify for desktop notifications
+    exe.linkSystemLibrary2("libnotify", .{});
+
     // System libraries
     exe.linkLibC();
 

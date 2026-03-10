@@ -12,11 +12,13 @@ const usage_text =
     \\  identify      Show current focus context
     \\  capabilities  List available API methods
     \\  tree          Show workspace/pane hierarchy
-    \\  workspace     Workspace management (list, create, current, select, close, rename)
+    \\  workspace     Workspace management (list, create, current, select, close, rename,
+    \\                  report-git, set-status, clear-status, add-log, clear-log, set-progress)
     \\  surface       Surface management (list, current)
     \\  pane          Pane management (list)
     \\  window        Window management (list, current)
     \\  send          Send text to a surface
+    \\  notification  Notification management (create, list, clear)
     \\
     \\Environment:
     \\  CMUX_SOCKET       Socket path override
@@ -102,8 +104,132 @@ pub fn main() !void {
                 return;
             };
             try sendAndPrint(socket_path, "workspace.rename", params, stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "report-git")) {
+            // cmux workspace report-git <id> <branch> [--dirty]
+            const id_str = args.next() orelse {
+                try stderr.writeAll("Usage: cmux workspace report-git <id> <branch> [--dirty]\n");
+                return;
+            };
+            const branch = args.next() orelse {
+                try stderr.writeAll("Usage: cmux workspace report-git <id> <branch> [--dirty]\n");
+                return;
+            };
+            var dirty = false;
+            if (args.next()) |flag| {
+                if (std.mem.eql(u8, flag, "--dirty")) dirty = true;
+            }
+            var params_buf: [4096]u8 = undefined;
+            const params = std.fmt.bufPrint(&params_buf, "{{\"id\":{s},\"branch\":\"{s}\",\"dirty\":{s}}}", .{
+                id_str,
+                branch,
+                if (dirty) "true" else "false",
+            }) catch {
+                try stderr.writeAll("Params too long\n");
+                return;
+            };
+            try sendAndPrint(socket_path, "workspace.report_git", params, stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "set-status")) {
+            // cmux workspace set-status <id> <key> <value>
+            const id_str = args.next() orelse {
+                try stderr.writeAll("Usage: cmux workspace set-status <id> <key> <value>\n");
+                return;
+            };
+            const key = args.next() orelse {
+                try stderr.writeAll("Usage: cmux workspace set-status <id> <key> <value>\n");
+                return;
+            };
+            const value = args.next() orelse {
+                try stderr.writeAll("Usage: cmux workspace set-status <id> <key> <value>\n");
+                return;
+            };
+            var params_buf: [4096]u8 = undefined;
+            const params = std.fmt.bufPrint(&params_buf, "{{\"id\":{s},\"key\":\"{s}\",\"value\":\"{s}\"}}", .{ id_str, key, value }) catch {
+                try stderr.writeAll("Params too long\n");
+                return;
+            };
+            try sendAndPrint(socket_path, "workspace.set_status", params, stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "clear-status")) {
+            // cmux workspace clear-status <id> [key]
+            const id_str = args.next() orelse {
+                try stderr.writeAll("Usage: cmux workspace clear-status <id> [key]\n");
+                return;
+            };
+            if (args.next()) |key| {
+                var params_buf: [4096]u8 = undefined;
+                const params = std.fmt.bufPrint(&params_buf, "{{\"id\":{s},\"key\":\"{s}\"}}", .{ id_str, key }) catch {
+                    try stderr.writeAll("Params too long\n");
+                    return;
+                };
+                try sendAndPrint(socket_path, "workspace.clear_status", params, stdout, stderr);
+            } else {
+                var params_buf: [256]u8 = undefined;
+                const params = std.fmt.bufPrint(&params_buf, "{{\"id\":{s}}}", .{id_str}) catch {
+                    try stderr.writeAll("Params too long\n");
+                    return;
+                };
+                try sendAndPrint(socket_path, "workspace.clear_status", params, stdout, stderr);
+            }
+        } else if (std.mem.eql(u8, sub, "add-log")) {
+            // cmux workspace add-log <id> <text>
+            const id_str = args.next() orelse {
+                try stderr.writeAll("Usage: cmux workspace add-log <id> <text>\n");
+                return;
+            };
+            const text = args.next() orelse {
+                try stderr.writeAll("Usage: cmux workspace add-log <id> <text>\n");
+                return;
+            };
+            var params_buf: [4096]u8 = undefined;
+            const params = std.fmt.bufPrint(&params_buf, "{{\"id\":{s},\"text\":\"{s}\"}}", .{ id_str, text }) catch {
+                try stderr.writeAll("Params too long\n");
+                return;
+            };
+            try sendAndPrint(socket_path, "workspace.add_log", params, stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "clear-log")) {
+            // cmux workspace clear-log <id>
+            const id_str = args.next() orelse {
+                try stderr.writeAll("Usage: cmux workspace clear-log <id>\n");
+                return;
+            };
+            var params_buf: [256]u8 = undefined;
+            const params = std.fmt.bufPrint(&params_buf, "{{\"id\":{s}}}", .{id_str}) catch {
+                try stderr.writeAll("Params too long\n");
+                return;
+            };
+            try sendAndPrint(socket_path, "workspace.clear_log", params, stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "set-progress")) {
+            // cmux workspace set-progress <id> <fraction> [label]
+            const id_str = args.next() orelse {
+                try stderr.writeAll("Usage: cmux workspace set-progress <id> <fraction> [label]\n");
+                return;
+            };
+            const fraction = args.next() orelse {
+                try stderr.writeAll("Usage: cmux workspace set-progress <id> <fraction> [label]\n");
+                return;
+            };
+            if (args.next()) |label| {
+                var params_buf: [4096]u8 = undefined;
+                const params = std.fmt.bufPrint(&params_buf, "{{\"id\":{s},\"fraction\":{s},\"label\":\"{s}\"}}", .{ id_str, fraction, label }) catch {
+                    try stderr.writeAll("Params too long\n");
+                    return;
+                };
+                try sendAndPrint(socket_path, "workspace.set_progress", params, stdout, stderr);
+            } else {
+                var params_buf: [256]u8 = undefined;
+                const params = std.fmt.bufPrint(&params_buf, "{{\"id\":{s},\"fraction\":{s}}}", .{ id_str, fraction }) catch {
+                    try stderr.writeAll("Params too long\n");
+                    return;
+                };
+                try sendAndPrint(socket_path, "workspace.set_progress", params, stdout, stderr);
+            }
+        } else if (std.mem.eql(u8, sub, "next")) {
+            try sendAndPrint(socket_path, "workspace.next", "{}", stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "previous") or std.mem.eql(u8, sub, "prev")) {
+            try sendAndPrint(socket_path, "workspace.previous", "{}", stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "last")) {
+            try sendAndPrint(socket_path, "workspace.last", "{}", stdout, stderr);
         } else {
-            try stderr.writeAll("Unknown workspace subcommand. Use: list, create, current, select, close, rename\n");
+            try stderr.writeAll("Unknown workspace subcommand. Use: list, create, current, select, close, rename,\n  report-git, set-status, clear-status, add-log, clear-log, set-progress, next, previous, last\n");
         }
     } else if (std.mem.eql(u8, subcommand, "surface")) {
         const sub = args.next() orelse "list";
@@ -141,6 +267,44 @@ pub fn main() !void {
             try sendAndPrint(socket_path, "window.current", "{}", stdout, stderr);
         } else {
             try stderr.writeAll("Unknown window subcommand. Use: list, current\n");
+        }
+    } else if (std.mem.eql(u8, subcommand, "notification") or std.mem.eql(u8, subcommand, "notify")) {
+        const sub = args.next() orelse "list";
+        if (std.mem.eql(u8, sub, "list")) {
+            try sendAndPrint(socket_path, "notification.list", "{}", stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "create")) {
+            const title = args.next() orelse {
+                try stderr.writeAll("Usage: cmux notification create <title> [body]\n");
+                return;
+            };
+            if (args.next()) |body| {
+                var params_buf: [4096]u8 = undefined;
+                const params = std.fmt.bufPrint(&params_buf, "{{\"title\":\"{s}\",\"body\":\"{s}\"}}", .{ title, body }) catch {
+                    try stderr.writeAll("Params too long\n");
+                    return;
+                };
+                try sendAndPrint(socket_path, "notification.create", params, stdout, stderr);
+            } else {
+                var params_buf: [4096]u8 = undefined;
+                const params = std.fmt.bufPrint(&params_buf, "{{\"title\":\"{s}\"}}", .{title}) catch {
+                    try stderr.writeAll("Params too long\n");
+                    return;
+                };
+                try sendAndPrint(socket_path, "notification.create", params, stdout, stderr);
+            }
+        } else if (std.mem.eql(u8, sub, "clear")) {
+            if (args.next()) |id_str| {
+                var params_buf: [256]u8 = undefined;
+                const params = std.fmt.bufPrint(&params_buf, "{{\"id\":{s}}}", .{id_str}) catch {
+                    try stderr.writeAll("Invalid id\n");
+                    return;
+                };
+                try sendAndPrint(socket_path, "notification.clear", params, stdout, stderr);
+            } else {
+                try sendAndPrint(socket_path, "notification.clear", "{}", stdout, stderr);
+            }
+        } else {
+            try stderr.writeAll("Unknown notification subcommand. Use: create, list, clear\n");
         }
     } else {
         try stderr.writeAll("Unknown command: ");

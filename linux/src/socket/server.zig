@@ -4,6 +4,7 @@ const protocol = @import("protocol.zig");
 const HandleRegistry = @import("handle_registry.zig");
 const handlers = @import("handlers.zig");
 const Window = @import("../window.zig");
+pub const NotificationStore = @import("../notification_store.zig");
 
 const c = @import("../c.zig");
 
@@ -21,6 +22,9 @@ accept_thread: ?std.Thread = null,
 
 /// Reference to the application window (set after both are initialized).
 window: ?*Window = null,
+
+/// In-memory notification store.
+notification_store: NotificationStore = .{},
 
 pub fn init(alloc: Allocator) !*Server {
     const self = try alloc.create(Server);

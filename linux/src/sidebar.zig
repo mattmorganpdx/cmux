@@ -176,7 +176,10 @@ fn createWorkspaceRow(ws: *const Workspace) *c.GtkWidget {
 fn createRowContentBox(ws: *const Workspace) *c.GtkBox {
     // Each row is a vertical box with:
     // - Title label
-    // - Subtitle label (git branch or pane count)
+    // - Subtitle label (git branch + dirty, or pane count)
+    // - Status entries (if any)
+    // - Progress bar (if active)
+    // - Last log entry (if any)
     const vbox: *c.GtkBox = @ptrCast(c.gtk_box_new(c.GTK_ORIENTATION_VERTICAL, 2));
     c.gtk_widget_set_margin_start(asWidget(vbox), 12);
     c.gtk_widget_set_margin_end(asWidget(vbox), 12);
@@ -196,30 +199,89 @@ fn createRowContentBox(ws: *const Workspace) *c.GtkBox {
     c.gtk_widget_set_hexpand(asWidget(title_label), 1);
     c.gtk_box_append(vbox, asWidget(title_label));
 
-    // Subtitle: git branch or pane count
-    var subtitle_buf: [128]u8 = undefined;
+    // Subtitle: git branch (with dirty indicator) or pane count
+    var subtitle_buf: [256]u8 = undefined;
     const pane_count = ws.paneCount();
-    const subtitle_slice = if (ws.getGitBranch()) |branch|
-        std.fmt.bufPrint(&subtitle_buf, "{s}", .{branch}) catch "..."
-    else
-        std.fmt.bufPrint(&subtitle_buf, "{d} pane{s}", .{
-            pane_count,
-            @as([]const u8, if (pane_count != 1) "s" else ""),
-        }) catch "...";
+    const subtitle_slice = if (ws.getGitBranch()) |branch| blk: {
+        if (ws.git_dirty) {
+            break :blk std.fmt.bufPrint(&subtitle_buf, "{s} *", .{branch}) catch "...";
+        } else {
+            break :blk std.fmt.bufPrint(&subtitle_buf, "{s}", .{branch}) catch "...";
+        }
+    } else std.fmt.bufPrint(&subtitle_buf, "{d} pane{s}", .{
+        pane_count,
+        @as([]const u8, if (pane_count != 1) "s" else ""),
+    }) catch "...";
 
-    // Null terminate
-    var sub_z: [129]u8 = undefined;
-    const sub_len = @min(subtitle_slice.len, 128);
-    @memcpy(sub_z[0..sub_len], subtitle_slice[0..sub_len]);
-    sub_z[sub_len] = 0;
+    appendDimLabel(vbox, subtitle_slice);
 
-    const subtitle_label: *c.GtkLabel = @ptrCast(@alignCast(c.gtk_label_new(&sub_z)));
-    c.gtk_label_set_xalign(subtitle_label, 0.0);
-    c.gtk_label_set_ellipsize(subtitle_label, c.PANGO_ELLIPSIZE_END);
-    c.gtk_widget_add_css_class(asWidget(subtitle_label), "dim-label");
-    c.gtk_box_append(vbox, asWidget(subtitle_label));
+    // Status entries row (if any)
+    if (ws.status_count > 0) {
+        var status_text_buf: [512]u8 = undefined;
+        var status_pos: usize = 0;
+        var iter = ws.statusIterator();
+        var first = true;
+        while (iter.next()) |entry| {
+            if (!first) {
+                if (status_pos + 3 <= status_text_buf.len) {
+                    @memcpy(status_text_buf[status_pos..][0..3], " | ");
+                    status_pos += 3;
+                }
+            }
+            first = false;
+            // "key: value"
+            const needed = entry.key.len + 2 + entry.value.len;
+            if (status_pos + needed <= status_text_buf.len) {
+                @memcpy(status_text_buf[status_pos..][0..entry.key.len], entry.key);
+                status_pos += entry.key.len;
+                @memcpy(status_text_buf[status_pos..][0..2], ": ");
+                status_pos += 2;
+                @memcpy(status_text_buf[status_pos..][0..entry.value.len], entry.value);
+                status_pos += entry.value.len;
+            }
+        }
+        if (status_pos > 0) {
+            appendDimLabel(vbox, status_text_buf[0..status_pos]);
+        }
+    }
+
+    // Progress bar (if active)
+    if (ws.progress > 0.0) {
+        const progress_bar: *c.GtkProgressBar = @ptrCast(@alignCast(c.gtk_progress_bar_new()));
+        c.gtk_progress_bar_set_fraction(progress_bar, ws.progress);
+        if (ws.getProgressLabel()) |label| {
+            var label_z: [129]u8 = undefined;
+            const label_len = @min(label.len, 128);
+            @memcpy(label_z[0..label_len], label[0..label_len]);
+            label_z[label_len] = 0;
+            c.gtk_progress_bar_set_text(progress_bar, &label_z);
+            c.gtk_progress_bar_set_show_text(progress_bar, 1);
+        }
+        c.gtk_box_append(vbox, asWidget(progress_bar));
+    }
+
+    // Last log entry (if any)
+    if (ws.lastLogEntry()) |entry| {
+        var log_buf: [256]u8 = undefined;
+        const log_slice = std.fmt.bufPrint(&log_buf, "> {s}", .{entry}) catch "...";
+        appendDimLabel(vbox, log_slice);
+    }
 
     return vbox;
+}
+
+/// Helper to append a dim (secondary) label to a vbox.
+fn appendDimLabel(vbox: *c.GtkBox, text: []const u8) void {
+    var z_buf: [513]u8 = undefined;
+    const len = @min(text.len, z_buf.len - 1);
+    @memcpy(z_buf[0..len], text[0..len]);
+    z_buf[len] = 0;
+
+    const label: *c.GtkLabel = @ptrCast(@alignCast(c.gtk_label_new(&z_buf)));
+    c.gtk_label_set_xalign(label, 0.0);
+    c.gtk_label_set_ellipsize(label, c.PANGO_ELLIPSIZE_END);
+    c.gtk_widget_add_css_class(asWidget(label), "dim-label");
+    c.gtk_box_append(vbox, asWidget(label));
 }
 
 // ------------------------------------------------------------------
