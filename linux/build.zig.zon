@@ -1,0 +1,7 @@
+.{
+    .name = .cmux_linux,
+    .version = "0.62.0",
+    .paths = .{""},
+    .fingerprint = 0xe6aaba3e8141e8ef,
+    .minimum_zig_version = "0.15.2",
+}
