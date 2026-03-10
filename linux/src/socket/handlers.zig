@@ -306,8 +306,7 @@ fn handleWorkspaceCreate(alloc: Allocator, server: *Server, req: *const protocol
     const title = req.getStringParam(alloc, "title");
     defer if (title) |t| alloc.free(t);
 
-    // Create the workspace (note: this should ideally dispatch to main thread
-    // for GTK widget operations, but for the data model it's safe)
+    // Create the workspace data model
     const ws = window.tab_manager.createWorkspace() catch |err| {
         return protocol.errorResponse(alloc, req.id, "create_failed", @errorName(err));
     };
@@ -317,6 +316,16 @@ fn handleWorkspaceCreate(alloc: Allocator, server: *Server, req: *const protocol
     }
 
     const idx = window.tab_manager.workspaces.items.len - 1;
+
+    // Schedule GTK widget building and switch on the main thread.
+    // The workspace data model is already created; we just need to build
+    // the widgets and switch the UI to it.
+    const switch_ctx = std.heap.c_allocator.create(WorkspaceSwitchCtx) catch {
+        return protocol.errorResponse(alloc, req.id, "internal_error", "Failed to allocate context");
+    };
+    switch_ctx.* = .{ .window = window, .index = idx };
+    _ = c.g_idle_add(&doWorkspaceSwitch, @ptrCast(switch_ctx));
+
     const ws_json = try workspaceToJson(alloc, ws, false, idx);
     defer alloc.free(ws_json);
 
@@ -353,17 +362,68 @@ fn handleWorkspaceSelect(alloc: Allocator, server: *Server, req: *const protocol
         return protocol.errorResponse(alloc, req.id, "no_window", "No window available");
     };
 
-    // Try by id first, then by index
+    // Resolve target workspace index
+    var target_index: ?usize = null;
+
     if (req.getIntParam(alloc, "id")) |id| {
-        window.tab_manager.selectById(@intCast(id));
+        const ws_id: u64 = @intCast(id);
+        for (window.tab_manager.workspaces.items, 0..) |ws, i| {
+            if (ws.id == ws_id) {
+                target_index = i;
+                break;
+            }
+        }
+        if (target_index == null) {
+            return protocol.errorResponse(alloc, req.id, "not_found", "Workspace not found");
+        }
     } else if (req.getIntParam(alloc, "index")) |index| {
-        window.tab_manager.selectIndex(@intCast(index));
+        const idx: usize = @intCast(index);
+        if (idx >= window.tab_manager.workspaces.items.len) {
+            return protocol.errorResponse(alloc, req.id, "not_found", "Invalid workspace index");
+        }
+        target_index = idx;
     } else {
         return protocol.errorResponse(alloc, req.id, "missing_param", "Requires 'id' or 'index' parameter");
     }
 
-    // Return the newly selected workspace
-    return handleWorkspaceCurrent(alloc, server, req);
+    const idx = target_index.?;
+
+    // Schedule the workspace switch on the GTK main thread
+    const ctx = std.heap.c_allocator.create(WorkspaceSwitchCtx) catch {
+        return protocol.errorResponse(alloc, req.id, "internal_error", "Failed to allocate context");
+    };
+    ctx.* = .{
+        .window = window,
+        .index = idx,
+    };
+    _ = c.g_idle_add(&doWorkspaceSwitch, @ptrCast(ctx));
+
+    // Return the workspace that will be selected
+    const ws = window.tab_manager.workspaces.items[idx];
+    const ws_json = try workspaceToJson(alloc, ws, true, idx);
+    defer alloc.free(ws_json);
+
+    const result = try std.fmt.allocPrint(alloc,
+        \\{{"workspace":{s}}}
+    , .{ws_json});
+    defer alloc.free(result);
+    return protocol.successResponse(alloc, req.id, result);
+}
+
+const WorkspaceSwitchCtx = struct {
+    window: *Window,
+    index: usize,
+};
+
+fn doWorkspaceSwitch(userdata: c.gpointer) callconv(.c) c.gboolean {
+    const ctx: *WorkspaceSwitchCtx = @ptrCast(@alignCast(userdata));
+    defer std.heap.c_allocator.destroy(ctx);
+
+    ctx.window.switchWorkspace(ctx.index) catch |err| {
+        log.warn("Failed to switch workspace from socket: {}", .{err});
+    };
+
+    return c.G_SOURCE_REMOVE;
 }
 
 fn handleWorkspaceClose(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
@@ -371,21 +431,66 @@ fn handleWorkspaceClose(alloc: Allocator, server: *Server, req: *const protocol.
         return protocol.errorResponse(alloc, req.id, "no_window", "No window available");
     };
 
+    // Validate the workspace exists before scheduling close
+    var close_id: ?u64 = null;
+    var close_index: ?usize = null;
+
     if (req.getIntParam(alloc, "id")) |id| {
-        const closed = window.tab_manager.closeWorkspaceById(@intCast(id));
-        if (!closed) {
+        const ws_id: u64 = @intCast(id);
+        for (window.tab_manager.workspaces.items, 0..) |ws, i| {
+            if (ws.id == ws_id) {
+                close_id = ws_id;
+                close_index = i;
+                break;
+            }
+        }
+        if (close_id == null) {
             return protocol.errorResponse(alloc, req.id, "not_found", "Workspace not found");
         }
     } else if (req.getIntParam(alloc, "index")) |index| {
-        const closed = window.tab_manager.closeWorkspace(@intCast(index));
-        if (!closed) {
+        const idx: usize = @intCast(index);
+        if (idx >= window.tab_manager.workspaces.items.len) {
             return protocol.errorResponse(alloc, req.id, "not_found", "Invalid workspace index");
         }
+        close_index = idx;
     } else {
         return protocol.errorResponse(alloc, req.id, "missing_param", "Requires 'id' or 'index' parameter");
     }
 
+    // Schedule close on main thread (tab_manager + sidebar rebuild)
+    const ctx = std.heap.c_allocator.create(WorkspaceCloseCtx) catch {
+        return protocol.errorResponse(alloc, req.id, "internal_error", "Failed to allocate context");
+    };
+    ctx.* = .{
+        .window = window,
+        .index = close_index.?,
+        .id = close_id,
+    };
+    _ = c.g_idle_add(&doWorkspaceClose, @ptrCast(ctx));
+
     return protocol.successResponse(alloc, req.id, "{\"closed\":true}");
+}
+
+const WorkspaceCloseCtx = struct {
+    window: *Window,
+    index: usize,
+    id: ?u64,
+};
+
+fn doWorkspaceClose(userdata: c.gpointer) callconv(.c) c.gboolean {
+    const ctx: *WorkspaceCloseCtx = @ptrCast(@alignCast(userdata));
+    defer std.heap.c_allocator.destroy(ctx);
+
+    if (ctx.id) |id| {
+        _ = ctx.window.tab_manager.closeWorkspaceById(@intCast(id));
+    } else {
+        _ = ctx.window.tab_manager.closeWorkspace(ctx.index);
+    }
+
+    // Rebuild sidebar to reflect the change
+    ctx.window.sidebar.rebuild();
+
+    return c.G_SOURCE_REMOVE;
 }
 
 fn handleWorkspaceRename(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {

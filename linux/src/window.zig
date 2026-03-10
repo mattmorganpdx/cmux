@@ -146,7 +146,7 @@ fn buildNodeWidget(self: *Window, ws: *Workspace, node_id: PaneTree.NodeId) !*c.
     switch (node) {
         .pane => {
             // Create a terminal widget for this pane
-            const tw = try TerminalWidget.create(self.app, null);
+            const tw = try TerminalWidget.create(self.app, ws.getCwd());
             try self.pane_widgets.put(node_id, tw);
             const widget = tw.widget();
             try self.node_widgets.put(node_id, widget);
@@ -176,14 +176,57 @@ fn buildNodeWidget(self: *Window, ws: *Workspace, node_id: PaneTree.NodeId) !*c.
             c.gtk_paned_set_start_child(paned, first_widget);
             c.gtk_paned_set_end_child(paned, second_widget);
 
-            // Set divider position (proportional -> pixel requires knowing the size,
-            // so we'll use a rough estimate for now and refine later)
-            // TODO: Set position based on actual allocation after realization.
-            c.gtk_paned_set_position(paned, @intFromFloat(s.divider_position * 480.0));
+            // Defer divider positioning until the widget has a real allocation.
+            setDividerOnRealize(paned, s.divider_position, s.orientation) catch {};
 
             try self.node_widgets.put(node_id, paned_widget);
             return paned_widget;
         },
+    }
+}
+
+// ------------------------------------------------------------------
+// Divider positioning
+// ------------------------------------------------------------------
+
+/// Context for deferred divider positioning on GtkPaned realize.
+const DividerData = struct {
+    paned: *c.GtkPaned,
+    position: f64,
+    orientation: PaneTree.Orientation,
+};
+
+/// Schedule proportional divider positioning after the GtkPaned is realized.
+fn setDividerOnRealize(paned: *c.GtkPaned, position: f64, orientation: PaneTree.Orientation) !void {
+    const alloc = std.heap.c_allocator;
+    const data = try alloc.create(DividerData);
+    data.* = .{
+        .paned = paned,
+        .position = position,
+        .orientation = orientation,
+    };
+    _ = c.g_signal_connect_data(
+        @as(c.gpointer, @ptrCast(paned)),
+        "realize",
+        @as(c.GCallback, @ptrCast(&onPanedRealize)),
+        @ptrCast(data),
+        null,
+        0,
+    );
+}
+
+fn onPanedRealize(_: *c.GtkWidget, userdata: c.gpointer) callconv(.c) void {
+    const data: *DividerData = @ptrCast(@alignCast(userdata));
+    defer std.heap.c_allocator.destroy(data);
+
+    const widget: *c.GtkWidget = @ptrCast(@alignCast(data.paned));
+    const size: f64 = switch (data.orientation) {
+        .horizontal => @floatFromInt(c.gtk_widget_get_width(widget)),
+        .vertical => @floatFromInt(c.gtk_widget_get_height(widget)),
+    };
+
+    if (size > 0) {
+        c.gtk_paned_set_position(data.paned, @intFromFloat(data.position * size));
     }
 }
 
@@ -216,8 +259,8 @@ pub fn splitFocused(self: *Window, direction: PaneTree.SplitDirection) !void {
         else => return,
     };
 
-    // Create a new terminal widget for the new pane
-    const new_tw = try TerminalWidget.create(self.app, null);
+    // Create a new terminal widget for the new pane, inheriting workspace cwd
+    const new_tw = try TerminalWidget.create(self.app, ws.getCwd());
     try self.pane_widgets.put(new_pane_id, new_tw);
     try self.node_widgets.put(new_pane_id, new_tw.widget());
 
@@ -278,6 +321,9 @@ pub fn splitFocused(self: *Window, direction: PaneTree.SplitDirection) !void {
     // Now set the children of the new paned
     c.gtk_paned_set_start_child(paned, first_widget);
     c.gtk_paned_set_end_child(paned, second_widget);
+
+    // Set 50/50 divider position after realization
+    setDividerOnRealize(paned, 0.5, s.orientation) catch {};
 
     try self.node_widgets.put(split_id, paned_widget);
 

@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("c.zig");
 const Clipboard = @import("clipboard.zig");
 const TerminalWidget = @import("terminal_widget.zig");
+const PaneTree = @import("pane_tree.zig");
 
 const log = std.log.scoped(.app);
 
@@ -88,9 +89,8 @@ fn wakeupCallback(_: ?*anyopaque) callconv(.c) void {
 }
 
 fn idleTickCallback(_: c.gpointer) callconv(.c) c.gboolean {
-    // Import the global app from main
-    const main = @import("main.zig");
-    if (main.global_app) |app| {
+    const main_mod = @import("main.zig");
+    if (main_mod.global_app) |app| {
         app.tick();
     }
     return c.G_SOURCE_REMOVE;
@@ -106,34 +106,146 @@ fn actionCallback(
 
     switch (action.tag) {
         c.GHOSTTY_ACTION_RENDER => {
-            // The renderer thread dispatches draw calls to the main thread
-            // via the mailbox (must_draw_from_app_thread=true on Linux).
-            // We need to queue a render on the GtkGLArea for the target surface.
             if (target.tag == c.GHOSTTY_TARGET_SURFACE) {
-                const surface = target.target.surface;
-                // Use the global surface registry to look up the TerminalWidget.
-                // This avoids potential issues with ghostty_surface_userdata
-                // pointer interpretation across C/Zig boundary.
-                if (TerminalWidget.fromSurface(surface)) |tw| {
+                if (TerminalWidget.fromSurface(target.target.surface)) |tw| {
                     tw.queueRender();
                     return true;
                 }
             }
             return false;
         },
-        else => {
-            // TODO: Handle other Ghostty actions (set_title, new_split, etc.)
-            return false;
+
+        c.GHOSTTY_ACTION_SET_TITLE => {
+            const title_ptr = action.action.set_title.title;
+            if (title_ptr == null) return false;
+
+            const ctx = std.heap.c_allocator.create(SetTitleCtx) catch return false;
+            ctx.* = .{ .title = title_ptr };
+            _ = c.g_idle_add(&doSetTitle, @ptrCast(ctx));
+            return true;
         },
+
+        c.GHOSTTY_ACTION_NEW_SPLIT => {
+            const ctx = std.heap.c_allocator.create(NewSplitCtx) catch return false;
+            ctx.* = .{ .direction = action.action.new_split };
+            _ = c.g_idle_add(&doNewSplit, @ptrCast(ctx));
+            return true;
+        },
+
+        c.GHOSTTY_ACTION_PWD => {
+            const pwd_ptr = action.action.pwd.pwd;
+            if (pwd_ptr == null) return false;
+
+            const ctx = std.heap.c_allocator.create(PwdCtx) catch return false;
+            ctx.* = .{ .pwd = pwd_ptr };
+            _ = c.g_idle_add(&doPwd, @ptrCast(ctx));
+            return true;
+        },
+
+        c.GHOSTTY_ACTION_CELL_SIZE => {
+            // Acknowledge — no action needed yet.
+            return true;
+        },
+
+        c.GHOSTTY_ACTION_CLOSE_WINDOW => {
+            _ = c.g_idle_add(&doCloseWindow, null);
+            return true;
+        },
+
+        else => return false,
     }
 }
 
-/// Called when Ghostty wants to close a surface.
+/// Called when Ghostty wants to close a surface (e.g., shell exits).
 fn closeSurfaceCallback(
     surface_userdata: ?*anyopaque,
     process_alive: bool,
 ) callconv(.c) void {
-    _ = surface_userdata;
     _ = process_alive;
-    // TODO: Close the terminal widget/pane containing this surface
+    _ = surface_userdata;
+    _ = c.g_idle_add(&doCloseSurface, null);
+}
+
+// --- Idle callback context types and handlers ---
+// These run on the GTK main thread via g_idle_add.
+
+const SetTitleCtx = struct {
+    /// Pointer into Ghostty-owned memory — only valid until the idle callback runs,
+    /// which happens on the next main loop iteration (before Ghostty can free it).
+    title: [*c]const u8,
+};
+
+fn doSetTitle(userdata: c.gpointer) callconv(.c) c.gboolean {
+    const ctx: *SetTitleCtx = @ptrCast(@alignCast(userdata));
+    defer std.heap.c_allocator.destroy(ctx);
+
+    const main_mod = @import("main.zig");
+    const window = main_mod.global_window orelse return c.G_SOURCE_REMOVE;
+
+    // Set the GTK window title
+    c.gtk_window_set_title(@ptrCast(window.gtk_window), ctx.title);
+
+    return c.G_SOURCE_REMOVE;
+}
+
+const NewSplitCtx = struct {
+    direction: c.ghostty_action_split_direction_e,
+};
+
+fn doNewSplit(userdata: c.gpointer) callconv(.c) c.gboolean {
+    const ctx: *NewSplitCtx = @ptrCast(@alignCast(userdata));
+    defer std.heap.c_allocator.destroy(ctx);
+
+    const main_mod = @import("main.zig");
+    const window = main_mod.global_window orelse return c.G_SOURCE_REMOVE;
+
+    const dir: PaneTree.SplitDirection = switch (ctx.direction) {
+        c.GHOSTTY_SPLIT_DIRECTION_RIGHT => .right,
+        c.GHOSTTY_SPLIT_DIRECTION_DOWN => .down,
+        c.GHOSTTY_SPLIT_DIRECTION_LEFT => .left,
+        c.GHOSTTY_SPLIT_DIRECTION_UP => .up,
+        else => .right,
+    };
+
+    window.splitFocused(dir) catch |err| {
+        log.warn("Failed to split from ghostty action: {}", .{err});
+    };
+
+    return c.G_SOURCE_REMOVE;
+}
+
+const PwdCtx = struct {
+    pwd: [*c]const u8,
+};
+
+fn doPwd(userdata: c.gpointer) callconv(.c) c.gboolean {
+    const ctx: *PwdCtx = @ptrCast(@alignCast(userdata));
+    defer std.heap.c_allocator.destroy(ctx);
+
+    const main_mod = @import("main.zig");
+    const window = main_mod.global_window orelse return c.G_SOURCE_REMOVE;
+
+    if (window.tab_manager.selectedWorkspace()) |ws| {
+        ws.setCwd(std.mem.span(ctx.pwd));
+    }
+
+    return c.G_SOURCE_REMOVE;
+}
+
+fn doCloseWindow(_: c.gpointer) callconv(.c) c.gboolean {
+    const main_mod = @import("main.zig");
+    const window = main_mod.global_window orelse return c.G_SOURCE_REMOVE;
+    c.gtk_window_destroy(@ptrCast(window.gtk_window));
+    return c.G_SOURCE_REMOVE;
+}
+
+fn doCloseSurface(_: c.gpointer) callconv(.c) c.gboolean {
+    const main_mod = @import("main.zig");
+    const window = main_mod.global_window orelse return c.G_SOURCE_REMOVE;
+
+    window.closeFocused() catch |err| {
+        log.warn("Failed to close surface: {}", .{err});
+    };
+
+    return c.G_SOURCE_REMOVE;
 }

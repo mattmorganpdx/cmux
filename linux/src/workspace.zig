@@ -19,8 +19,9 @@ pinned: bool = false,
 /// The pane tree managing the split layout for this workspace.
 pane_tree: PaneTree,
 
-/// Working directory for new terminals in this workspace.
-cwd: ?[*:0]const u8 = null,
+/// Working directory buffer for new terminals in this workspace.
+cwd_buf: [4096]u8 = [_]u8{0} ** 4096,
+cwd_len: usize = 0,
 
 /// Git branch name (polled from cwd).
 git_branch: [128]u8 = [_]u8{0} ** 128,
@@ -59,6 +60,19 @@ pub fn setGitBranch(self: *Workspace, branch: []const u8) void {
 pub fn getGitBranch(self: *const Workspace) ?[]const u8 {
     if (self.git_branch_len == 0) return null;
     return self.git_branch[0..self.git_branch_len];
+}
+
+pub fn setCwd(self: *Workspace, path: []const u8) void {
+    const len = @min(path.len, self.cwd_buf.len - 1);
+    @memcpy(self.cwd_buf[0..len], path[0..len]);
+    self.cwd_buf[len] = 0;
+    self.cwd_len = len;
+}
+
+/// Get the cwd as a null-terminated C string, or null if unset.
+pub fn getCwd(self: *Workspace) ?[*:0]const u8 {
+    if (self.cwd_len == 0) return null;
+    return @ptrCast(&self.cwd_buf);
 }
 
 /// Get the number of panes in this workspace.

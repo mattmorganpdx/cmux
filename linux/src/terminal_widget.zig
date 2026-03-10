@@ -19,6 +19,9 @@ app: *App,
 /// When false, queueRender is a no-op to avoid GTK assertions.
 realized: bool = false,
 
+/// Working directory for this terminal, passed to Ghostty on realize.
+working_directory: ?[*:0]const u8 = null,
+
 /// Global registry mapping ghostty_surface_t → *TerminalWidget.
 /// Used by the action callback to look up widgets without relying on
 /// ghostty_surface_userdata pointer interpretation.
@@ -176,9 +179,7 @@ pub fn create(app: *App, working_directory: ?[*:0]const u8) !*TerminalWidget {
         motion_controller,
     );
 
-    // Store the working directory for surface creation in onRealize
-    // (GtkGLArea needs to be realized before we can create the GL context)
-    _ = working_directory; // TODO: store and use in onRealize
+    self.working_directory = working_directory;
 
     return self;
 }
@@ -237,6 +238,7 @@ fn onRealize(gl_area: *c.GtkGLArea, userdata: c.gpointer) callconv(.c) void {
     } };
     surface_config.scale_factor = scale;
     surface_config.userdata = @ptrCast(self);
+    surface_config.working_directory = self.working_directory;
 
     // Create the Ghostty surface
     self.surface = c.ghostty_surface_new(self.app.ghostty_app, &surface_config);

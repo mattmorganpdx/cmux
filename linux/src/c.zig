@@ -38,6 +38,7 @@ pub const gtk_window_set_title = raw.gtk_window_set_title;
 pub const gtk_window_set_default_size = raw.gtk_window_set_default_size;
 pub const gtk_window_set_child = raw.gtk_window_set_child;
 pub const gtk_window_present = raw.gtk_window_present;
+pub const gtk_window_destroy = raw.gtk_window_destroy;
 pub const gtk_box_new = raw.gtk_box_new;
 pub const gtk_box_append = raw.gtk_box_append;
 pub const gtk_box_remove = raw.gtk_box_remove;
@@ -129,6 +130,8 @@ pub const gtk_widget_set_focusable = raw.gtk_widget_set_focusable;
 pub const gtk_widget_set_can_focus = raw.gtk_widget_set_can_focus;
 pub const gtk_widget_grab_focus = raw.gtk_widget_grab_focus;
 pub const gtk_widget_get_scale_factor = raw.gtk_widget_get_scale_factor;
+pub const gtk_widget_get_width = raw.gtk_widget_get_width;
+pub const gtk_widget_get_height = raw.gtk_widget_get_height;
 pub const gtk_widget_add_controller = raw.gtk_widget_add_controller;
 pub const gtk_gl_area_new = raw.gtk_gl_area_new;
 pub const gtk_gl_area_set_required_version = raw.gtk_gl_area_set_required_version;
@@ -151,12 +154,19 @@ pub const g_object_ref = raw.g_object_ref;
 pub const g_object_unref = raw.g_object_unref;
 pub const g_signal_connect_data = raw.g_signal_connect_data;
 pub const g_idle_add = raw.g_idle_add;
+pub const g_error_free = raw.g_error_free;
+pub const g_free = raw.g_free;
+pub const GAsyncResult = raw.GAsyncResult;
+pub const GObject = raw.GObject;
+pub const GError = raw.GError;
 
 // GDK clipboard
 pub const gdk_display_get_default = raw.gdk_display_get_default;
 pub const gdk_display_get_clipboard = raw.gdk_display_get_clipboard;
 pub const gdk_display_get_primary_clipboard = raw.gdk_display_get_primary_clipboard;
 pub const gdk_clipboard_set_text = raw.gdk_clipboard_set_text;
+pub const gdk_clipboard_read_text_async = raw.gdk_clipboard_read_text_async;
+pub const gdk_clipboard_read_text_finish = raw.gdk_clipboard_read_text_finish;
 
 // GTK constants
 pub const G_APPLICATION_DEFAULT_FLAGS = raw.G_APPLICATION_DEFAULT_FLAGS;
@@ -180,6 +190,7 @@ pub const ghostty_clipboard_content_s = raw.ghostty_clipboard_content_s;
 pub const ghostty_clipboard_request_e = raw.ghostty_clipboard_request_e;
 pub const ghostty_input_mods_t = raw.ghostty_input_mods_e;
 pub const ghostty_input_mouse_button_e = raw.ghostty_input_mouse_button_e;
+pub const ghostty_action_split_direction_e = raw.ghostty_action_split_direction_e;
 pub const ghostty_target_s = raw.ghostty_target_s;
 pub const ghostty_action_s = raw.ghostty_action_s;
 
@@ -205,12 +216,22 @@ pub const ghostty_surface_text = raw.ghostty_surface_text;
 
 pub const ghostty_surface_userdata = raw.ghostty_surface_userdata;
 pub const ghostty_surface_binding_action = raw.ghostty_surface_binding_action;
+pub const ghostty_surface_complete_clipboard_request = raw.ghostty_surface_complete_clipboard_request;
 
 // Ghostty constants
 pub const GHOSTTY_SUCCESS = raw.GHOSTTY_SUCCESS;
 pub const GHOSTTY_PLATFORM_LINUX = raw.GHOSTTY_PLATFORM_LINUX;
 pub const GHOSTTY_ACTION_RENDER = raw.GHOSTTY_ACTION_RENDER;
+pub const GHOSTTY_ACTION_SET_TITLE = raw.GHOSTTY_ACTION_SET_TITLE;
+pub const GHOSTTY_ACTION_NEW_SPLIT = raw.GHOSTTY_ACTION_NEW_SPLIT;
+pub const GHOSTTY_ACTION_CLOSE_WINDOW = raw.GHOSTTY_ACTION_CLOSE_WINDOW;
+pub const GHOSTTY_ACTION_CELL_SIZE = raw.GHOSTTY_ACTION_CELL_SIZE;
+pub const GHOSTTY_ACTION_PWD = raw.GHOSTTY_ACTION_PWD;
 pub const GHOSTTY_TARGET_SURFACE = raw.GHOSTTY_TARGET_SURFACE;
+pub const GHOSTTY_SPLIT_DIRECTION_RIGHT = raw.GHOSTTY_SPLIT_DIRECTION_RIGHT;
+pub const GHOSTTY_SPLIT_DIRECTION_DOWN = raw.GHOSTTY_SPLIT_DIRECTION_DOWN;
+pub const GHOSTTY_SPLIT_DIRECTION_LEFT = raw.GHOSTTY_SPLIT_DIRECTION_LEFT;
+pub const GHOSTTY_SPLIT_DIRECTION_UP = raw.GHOSTTY_SPLIT_DIRECTION_UP;
 pub const GHOSTTY_CLIPBOARD_STANDARD = raw.GHOSTTY_CLIPBOARD_STANDARD;
 pub const GHOSTTY_CLIPBOARD_SELECTION = raw.GHOSTTY_CLIPBOARD_SELECTION;
 pub const GHOSTTY_MODS_NONE = raw.GHOSTTY_MODS_NONE;
