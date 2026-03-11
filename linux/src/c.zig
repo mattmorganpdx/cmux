@@ -327,6 +327,10 @@ pub const GHOSTTY_POINT_COORD_EXACT = raw.GHOSTTY_POINT_COORD_EXACT;
 pub const GHOSTTY_POINT_COORD_TOP_LEFT = raw.GHOSTTY_POINT_COORD_TOP_LEFT;
 pub const GHOSTTY_POINT_COORD_BOTTOM_RIGHT = raw.GHOSTTY_POINT_COORD_BOTTOM_RIGHT;
 
+// GDK key utilities
+pub const gdk_keyval_to_unicode = raw.gdk_keyval_to_unicode;
+pub const gdk_keyval_to_lower = raw.gdk_keyval_to_lower;
+
 // libnotify
 pub const notify_init = raw.notify_init;
 pub const notify_uninit = raw.notify_uninit;

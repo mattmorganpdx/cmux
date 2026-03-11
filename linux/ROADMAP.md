@@ -182,7 +182,7 @@ These are significant features from macOS that would be valuable but aren't bloc
 
 - [ ] **Markdown panel** — Render local markdown files in a pane.
 
-- [ ] **Claude Code integration** — Session tracking, sidebar status. The macOS version has wrapper scripts and hook commands.
+- [x] **Claude Code integration** — Session tracking, sidebar status via `claude.hook` socket method. Wrapper script (`Resources/bin/claude`) detects Linux and uses `cmux-cli`. In-memory session store maps session IDs to workspaces. Sidebar shows classified status (Running/Permission/Error/Waiting/Attention). Desktop notifications on stop and notification events. CLI supports `--socket` flag and `claude-hook` subcommand with stdin JSON parsing.
 
 - [ ] **Port scanner** — Detect TCP listening ports per terminal pane.
 
@@ -215,8 +215,8 @@ These are significant features from macOS that would be valuable but aren't bloc
 
 ## Current State
 
-As of 2026-03-11: The Linux port is ready for dogfooding. All 41 socket API methods have matching CLI commands. The `cmux-cli` binary is standalone (libc only, no GTK) and can be placed in PATH for agent use. Agent instructions are configured via `linux/CLAUDE.md` so future sessions know the workflow.
+As of 2026-03-11: The Linux port is ready for dogfooding with Claude Code integration. 42 socket API methods (41 original + `claude.hook`) have matching CLI commands. The `cmux-cli` binary supports `--socket` flag for explicit socket path override. Agent instructions are configured via `linux/CLAUDE.md`.
 
-An AI agent can: read terminal output (`surface read-text --scrollback`), send commands and keystrokes, create/close splits, navigate workspaces, resize/swap panes, discover its own terminal context via environment variables, have its workspace layout survive restarts, feed metadata (git branch, status, progress, logs) into the sidebar, receive desktop notifications, discover and execute actions via the command palette API, search terminal content, color-code and pin workspaces, and reorganize panes across workspaces — all through either the socket API or the `cmux-cli` command-line tool.
+An AI agent can: read terminal output, send commands and keystrokes, create/close splits, navigate workspaces, resize/swap panes, discover its own terminal context via environment variables, have its workspace layout survive restarts, feed metadata into the sidebar, receive desktop notifications, use the command palette API, search terminal content, color-code and pin workspaces, reorganize panes across workspaces, and have Claude Code session status automatically reflected in the sidebar — all through the socket API or `cmux-cli`.
 
-Phases 0-6 are complete (~35-40% of macOS feature parity, but 100% of what's needed to start using cmux as the agent's own development terminal). Priority 6 (long tail feature parity with macOS) is next.
+Phases 0-6 are complete plus Claude Code integration from Priority 6. Remaining Priority 6 items (long tail feature parity with macOS) are next.

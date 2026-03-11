@@ -7,6 +7,7 @@ const Workspace = @import("../workspace.zig");
 const PaneTree = @import("../pane_tree.zig");
 const TerminalWidget = @import("../terminal_widget.zig");
 const CommandPalette = @import("../command_palette.zig");
+const ClaudeSessionStore = @import("../claude_session_store.zig");
 const c = @import("../c.zig");
 
 const Allocator = std.mem.Allocator;
@@ -157,6 +158,11 @@ pub fn dispatch(alloc: Allocator, server: *Server, req: *const protocol.Request)
         return handleCommandPaletteExecute(alloc, server, req);
     }
 
+    // Claude Code integration
+    if (std.mem.eql(u8, req.method, "claude.hook")) {
+        return handleClaudeHook(alloc, server, req);
+    }
+
     return protocol.errorResponse(alloc, req.id, "method_not_found", req.method);
 }
 
@@ -258,7 +264,8 @@ fn handleSystemCapabilities(alloc: Allocator, req: *const protocol.Request) ![]c
         \\"pane.list","pane.resize","pane.swap","pane.break","pane.join",
         \\"window.list","window.current",
         \\"notification.create","notification.list","notification.clear",
-        \\"command_palette.list","command_palette.execute"]}
+        \\"command_palette.list","command_palette.execute",
+        \\"claude.hook"]}
     ;
     return protocol.successResponse(alloc, req.id, methods);
 }
@@ -2040,4 +2047,185 @@ fn doPaletteExecute(userdata: c.gpointer) callconv(.c) c.gboolean {
 
     _ = ctx.window.command_palette.executeByName(ctx.action_name);
     return c.G_SOURCE_REMOVE;
+}
+
+// ------------------------------------------------------------------
+// Claude Code integration
+// ------------------------------------------------------------------
+
+fn handleClaudeHook(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const subcommand = req.getStringParam(alloc, "subcommand") orelse {
+        return protocol.errorResponse(alloc, req.id, "missing_param", "Requires 'subcommand' parameter");
+    };
+    defer alloc.free(subcommand);
+
+    if (std.mem.eql(u8, subcommand, "session-start") or std.mem.eql(u8, subcommand, "active")) {
+        return handleClaudeSessionStart(alloc, server, req);
+    } else if (std.mem.eql(u8, subcommand, "stop") or std.mem.eql(u8, subcommand, "idle")) {
+        return handleClaudeStop(alloc, server, req);
+    } else if (std.mem.eql(u8, subcommand, "notification") or std.mem.eql(u8, subcommand, "notify")) {
+        return handleClaudeNotification(alloc, server, req);
+    } else if (std.mem.eql(u8, subcommand, "prompt-submit")) {
+        return handleClaudePromptSubmit(alloc, server, req);
+    }
+
+    return protocol.errorResponse(alloc, req.id, "invalid_param", "Unknown claude.hook subcommand");
+}
+
+/// Resolve a workspace by explicit workspace_id param, session store lookup, or current.
+fn resolveClaudeWorkspace(server: *Server, alloc: Allocator, req: *const protocol.Request) ?*Workspace {
+    const window = server.window orelse return null;
+
+    // 1. Explicit workspace_id param
+    if (req.getIntParam(alloc, "workspace_id")) |id| {
+        return window.tab_manager.findById(@intCast(id));
+    }
+
+    // 2. Look up via session store
+    if (req.getStringParam(alloc, "session_id")) |sid| {
+        defer alloc.free(sid);
+        if (server.claude_session_store.lookup(sid)) |rec| {
+            return window.tab_manager.findById(@intCast(rec.workspace_id));
+        }
+    }
+
+    // 3. Fall back to current workspace
+    return window.tab_manager.selectedWorkspace();
+}
+
+fn handleClaudeSessionStart(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const ws = resolveClaudeWorkspace(server, alloc, req) orelse {
+        return protocol.errorResponse(alloc, req.id, "not_found", "Workspace not found");
+    };
+
+    // Store session mapping
+    const session_id = req.getStringParam(alloc, "session_id");
+    defer if (session_id) |s| alloc.free(s);
+    const cwd = req.getStringParam(alloc, "cwd");
+    defer if (cwd) |c_val| alloc.free(c_val);
+    const surface_id: u64 = if (req.getIntParam(alloc, "surface_id")) |s| @intCast(s) else 0;
+
+    if (session_id) |sid| {
+        server.claude_session_store.upsert(sid, ws.id, surface_id, cwd);
+    }
+
+    ws.setStatusEntry("claude", "Running");
+    scheduleSidebarUpdate(server, ws);
+
+    log.info("Claude session started for workspace {d}", .{ws.id});
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+fn handleClaudeStop(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const ws = resolveClaudeWorkspace(server, alloc, req) orelse {
+        return protocol.errorResponse(alloc, req.id, "not_found", "Workspace not found");
+    };
+
+    // Consume session mapping
+    const session_id = req.getStringParam(alloc, "session_id");
+    defer if (session_id) |s| alloc.free(s);
+    const surface_id: u64 = if (req.getIntParam(alloc, "surface_id")) |s| @intCast(s) else 0;
+
+    const record = server.claude_session_store.consume(session_id, ws.id, if (surface_id > 0) surface_id else null);
+
+    // Build notification body from stored record if available
+    const notif_body: []const u8 = if (record) |rec|
+        rec.getLastBody() orelse "Session complete"
+    else
+        "Session complete";
+
+    ws.removeStatusEntry("claude");
+    scheduleSidebarUpdate(server, ws);
+
+    _ = server.notification_store.add("Claude Code", notif_body);
+
+    log.info("Claude session stopped for workspace {d}", .{ws.id});
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+fn handleClaudeNotification(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const ws = resolveClaudeWorkspace(server, alloc, req) orelse {
+        return protocol.errorResponse(alloc, req.id, "not_found", "Workspace not found");
+    };
+
+    const message = req.getStringParam(alloc, "message");
+    defer if (message) |m| alloc.free(m);
+    const event = req.getStringParam(alloc, "event");
+    defer if (event) |e| alloc.free(e);
+
+    // Classify notification
+    const classified = classifyClaudeNotification(event, message);
+
+    // Update sidebar status
+    ws.setStatusEntry("claude", classified.label);
+    scheduleSidebarUpdate(server, ws);
+
+    // Fire desktop notification
+    _ = server.notification_store.add("Claude Code", classified.body);
+
+    // Update session record with last message info
+    const session_id = req.getStringParam(alloc, "session_id");
+    defer if (session_id) |s| alloc.free(s);
+    server.claude_session_store.updateMessage(session_id, ws.id, classified.label, classified.body);
+
+    log.info("Claude notification ({s}) for workspace {d}", .{ classified.label, ws.id });
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+fn handleClaudePromptSubmit(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const ws = resolveClaudeWorkspace(server, alloc, req) orelse {
+        return protocol.errorResponse(alloc, req.id, "not_found", "Workspace not found");
+    };
+
+    ws.setStatusEntry("claude", "Running");
+    scheduleSidebarUpdate(server, ws);
+
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+const ClassifiedNotification = struct {
+    label: []const u8,
+    body: []const u8,
+};
+
+fn classifyClaudeNotification(event: ?[]const u8, message: ?[]const u8) ClassifiedNotification {
+    const default_body = message orelse "Claude needs your attention";
+
+    // Check event and message for classification keywords.
+    const sources = [_]?[]const u8{ event, message };
+    for (&sources) |maybe_src| {
+        const src = maybe_src orelse continue;
+        if (containsCI(src, "permission") or containsCI(src, "approve") or containsCI(src, "approval")) {
+            return .{ .label = "Permission", .body = message orelse "Approval needed" };
+        }
+        if (containsCI(src, "error") or containsCI(src, "failed") or containsCI(src, "exception")) {
+            return .{ .label = "Error", .body = message orelse "Claude reported an error" };
+        }
+        if (containsCI(src, "idle") or containsCI(src, "wait") or containsCI(src, "input")) {
+            return .{ .label = "Waiting", .body = message orelse "Claude is waiting for input" };
+        }
+    }
+
+    return .{ .label = "Attention", .body = default_body };
+}
+
+/// Case-insensitive substring search.
+fn containsCI(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len > haystack.len) return false;
+    const end = haystack.len - needle.len + 1;
+    for (0..end) |i| {
+        var matched = true;
+        for (0..needle.len) |j| {
+            if (toLowerAscii(haystack[i + j]) != toLowerAscii(needle[j])) {
+                matched = false;
+                break;
+            }
+        }
+        if (matched) return true;
+    }
+    return false;
+}
+
+fn toLowerAscii(ch: u8) u8 {
+    return if (ch >= 'A' and ch <= 'Z') ch + 32 else ch;
 }

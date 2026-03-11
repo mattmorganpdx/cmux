@@ -68,6 +68,20 @@ cmux-cli surface list     # list all surfaces with IDs
 cmux-cli pane list        # list all panes
 ```
 
+### Claude Code integration
+
+When the `Resources/bin/claude` wrapper is in PATH before the real `claude` binary, it automatically injects hooks so Claude Code sessions report status to the cmux sidebar.
+
+```bash
+# The wrapper handles this automatically, but you can also manually:
+echo '{"session_id":"abc"}' | cmux-cli claude-hook session-start
+echo '{}' | cmux-cli claude-hook stop
+echo '{"message":"Needs approval"}' | cmux-cli claude-hook notification
+echo '{}' | cmux-cli claude-hook prompt-submit
+```
+
+The sidebar shows `claude: Running`, `claude: Permission`, `claude: Error`, `claude: Waiting`, or `claude: Attention` depending on the hook event. Desktop notifications fire on stop and notification events.
+
 ### Environment
 
 Each terminal pane automatically gets these environment variables:

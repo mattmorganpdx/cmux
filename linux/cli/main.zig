@@ -20,6 +20,10 @@ const usage_text =
     \\  send          Send text to a surface
     \\  notification  Notification management (create, list, clear)
     \\  palette       Command palette (list, execute)
+    \\  claude-hook   Claude Code integration (session-start, stop, notification, prompt-submit)
+    \\
+    \\Options:
+    \\  --socket <path>  Override socket path
     \\
     \\Environment:
     \\  CMUX_SOCKET       Socket path override
@@ -34,17 +38,29 @@ pub fn main() !void {
     var args = std.process.args();
     _ = args.skip(); // skip program name
 
-    const subcommand = args.next() orelse {
+    // Check for --socket flag before the subcommand.
+    // The wrapper script may pass: cmux-cli --socket /path ping
+    var socket_override: ?[]const u8 = null;
+    var first_arg = args.next() orelse {
         try stdout.writeAll(usage_text);
         return;
     };
+    if (std.mem.eql(u8, first_arg, "--socket")) {
+        socket_override = args.next();
+        first_arg = args.next() orelse {
+            try stdout.writeAll(usage_text);
+            return;
+        };
+    }
+    const subcommand = first_arg;
 
-    // Determine socket path
-    const socket_path = posix.getenv("CMUX_SOCKET") orelse
+    // Determine socket path: --socket flag > env vars > default
+    const socket_path = socket_override orelse
+        posix.getenv("CMUX_SOCKET") orelse
         posix.getenv("CMUX_SOCKET_PATH") orelse
         "/tmp/cmux.sock";
 
-    // Dispatch subcommand
+    // args iterator now points to the first argument after the subcommand.
     if (std.mem.eql(u8, subcommand, "ping")) {
         try sendAndPrint(socket_path, "system.ping", "{}", stdout, stderr);
     } else if (std.mem.eql(u8, subcommand, "identify")) {
@@ -505,10 +521,170 @@ pub fn main() !void {
         } else {
             try stderr.writeAll("Unknown palette subcommand. Use: list, execute\n");
         }
+    } else if (std.mem.eql(u8, subcommand, "claude-hook")) {
+        // Claude Code hook integration. Reads JSON payload from stdin.
+        // Usage: cmux-cli claude-hook <session-start|stop|notification|prompt-submit>
+        const hook_sub = args.next() orelse {
+            try stderr.writeAll("Usage: cmux claude-hook <session-start|stop|notification|prompt-submit>\n");
+            return;
+        };
+
+        // Read stdin (Claude Code pipes hook JSON payload via stdin)
+        var stdin_buf: [8192]u8 = undefined;
+        var stdin_len: usize = 0;
+        const stdin = std.fs.File.stdin();
+        while (stdin_len < stdin_buf.len) {
+            const n = stdin.read(stdin_buf[stdin_len..]) catch break;
+            if (n == 0) break;
+            stdin_len += n;
+        }
+
+        // Extract fields from stdin JSON into stack buffers.
+        var sid_buf: [256]u8 = undefined;
+        var sid_len: usize = 0;
+        var msg_buf: [2048]u8 = undefined;
+        var msg_len: usize = 0;
+        var evt_buf: [256]u8 = undefined;
+        var evt_len: usize = 0;
+        var cwd_buf: [512]u8 = undefined;
+        var cwd_len: usize = 0;
+
+        if (stdin_len > 0) {
+            const parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, stdin_buf[0..stdin_len], .{}) catch null;
+            if (parsed) |p| {
+                defer p.deinit();
+                if (p.value == .object) {
+                    if (extractJsonString(p.value, &[_][]const u8{ "session_id", "sessionId" })) |s| {
+                        sid_len = @min(s.len, sid_buf.len);
+                        @memcpy(sid_buf[0..sid_len], s[0..sid_len]);
+                    }
+                    if (extractJsonString(p.value, &[_][]const u8{ "message", "body", "text", "prompt", "error", "description" })) |s| {
+                        msg_len = @min(s.len, msg_buf.len);
+                        @memcpy(msg_buf[0..msg_len], s[0..msg_len]);
+                    }
+                    if (extractJsonString(p.value, &[_][]const u8{ "event", "event_name", "hook_event_name", "type", "kind" })) |s| {
+                        evt_len = @min(s.len, evt_buf.len);
+                        @memcpy(evt_buf[0..evt_len], s[0..evt_len]);
+                    }
+                    if (extractJsonString(p.value, &[_][]const u8{ "cwd", "working_directory", "project_dir" })) |s| {
+                        cwd_len = @min(s.len, cwd_buf.len);
+                        @memcpy(cwd_buf[0..cwd_len], s[0..cwd_len]);
+                    }
+
+                    // Also check nested .notification and .data objects
+                    if (sid_len == 0) {
+                        for ([_][]const u8{ "notification", "data", "session", "context" }) |ns| {
+                            if (p.value.object.get(ns)) |nested| {
+                                if (nested == .object) {
+                                    if (extractJsonString(nested, &[_][]const u8{ "session_id", "sessionId", "id" })) |s| {
+                                        sid_len = @min(s.len, sid_buf.len);
+                                        @memcpy(sid_buf[0..sid_len], s[0..sid_len]);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (msg_len == 0) {
+                        for ([_][]const u8{ "notification", "data" }) |ns| {
+                            if (p.value.object.get(ns)) |nested| {
+                                if (nested == .object) {
+                                    if (extractJsonString(nested, &[_][]const u8{ "message", "body", "text" })) |s| {
+                                        msg_len = @min(s.len, msg_buf.len);
+                                        @memcpy(msg_buf[0..msg_len], s[0..msg_len]);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        const session_id: ?[]const u8 = if (sid_len > 0) sid_buf[0..sid_len] else null;
+        const message: ?[]const u8 = if (msg_len > 0) msg_buf[0..msg_len] else null;
+        const event: ?[]const u8 = if (evt_len > 0) evt_buf[0..evt_len] else null;
+        const cwd_val: ?[]const u8 = if (cwd_len > 0) cwd_buf[0..cwd_len] else null;
+
+        // Get workspace_id and surface_id from env vars
+        const ws_id = posix.getenv("CMUX_WORKSPACE_ID");
+        const surface_id = posix.getenv("CMUX_SURFACE_ID");
+
+        // Build params JSON
+        var params_buf: [8192]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&params_buf);
+        const writer = fbs.writer();
+        try writer.writeAll("{\"subcommand\":\"");
+        try writer.writeAll(hook_sub);
+        try writer.writeByte('"');
+        if (session_id) |sid| {
+            try writer.writeAll(",\"session_id\":\"");
+            try writeJsonEscaped(writer, sid);
+            try writer.writeByte('"');
+        }
+        if (ws_id) |w| {
+            try writer.writeAll(",\"workspace_id\":");
+            try writer.writeAll(w);
+        }
+        if (surface_id) |s| {
+            try writer.writeAll(",\"surface_id\":");
+            try writer.writeAll(s);
+        }
+        if (message) |m| {
+            try writer.writeAll(",\"message\":\"");
+            try writeJsonEscaped(writer, m);
+            try writer.writeByte('"');
+        }
+        if (event) |e| {
+            try writer.writeAll(",\"event\":\"");
+            try writeJsonEscaped(writer, e);
+            try writer.writeByte('"');
+        }
+        if (cwd_val) |c| {
+            try writer.writeAll(",\"cwd\":\"");
+            try writeJsonEscaped(writer, c);
+            try writer.writeByte('"');
+        }
+        try writer.writeByte('}');
+
+        const params = fbs.getWritten();
+        try sendAndPrint(socket_path, "claude.hook", params, stdout, stderr);
     } else {
         try stderr.writeAll("Unknown command: ");
         try stderr.writeAll(subcommand);
         try stderr.writeAll("\nRun 'cmux' for usage.\n");
+    }
+}
+
+/// Extract a string from a JSON object, trying multiple key names.
+fn extractJsonString(obj: std.json.Value, keys: []const []const u8) ?[]const u8 {
+    if (obj != .object) return null;
+    for (keys) |key| {
+        if (obj.object.get(key)) |val| {
+            if (val == .string) return val.string;
+        }
+    }
+    return null;
+}
+
+/// Write a JSON-escaped string (handles quotes, backslash, control chars).
+fn writeJsonEscaped(writer: anytype, s: []const u8) !void {
+    for (s) |ch| {
+        switch (ch) {
+            '"' => try writer.writeAll("\\\""),
+            '\\' => try writer.writeAll("\\\\"),
+            '\n' => try writer.writeAll("\\n"),
+            '\r' => try writer.writeAll("\\r"),
+            '\t' => try writer.writeAll("\\t"),
+            else => {
+                if (ch < 0x20) {
+                    try writer.print("\\u{x:0>4}", .{ch});
+                } else {
+                    try writer.writeByte(ch);
+                }
+            },
+        }
     }
 }
 

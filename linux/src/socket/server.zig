@@ -5,6 +5,7 @@ const HandleRegistry = @import("handle_registry.zig");
 const handlers = @import("handlers.zig");
 const Window = @import("../window.zig");
 pub const NotificationStore = @import("../notification_store.zig");
+pub const ClaudeSessionStore = @import("../claude_session_store.zig");
 
 const c = @import("../c.zig");
 
@@ -26,6 +27,9 @@ window: ?*Window = null,
 /// In-memory notification store.
 notification_store: NotificationStore = .{},
 
+/// In-memory Claude Code session store.
+claude_session_store: ClaudeSessionStore,
+
 pub fn init(alloc: Allocator) !*Server {
     const self = try alloc.create(Server);
 
@@ -41,6 +45,7 @@ pub fn init(alloc: Allocator) !*Server {
         .alloc = alloc,
         .socket_path = socket_path,
         .registry = HandleRegistry.init(alloc),
+        .claude_session_store = ClaudeSessionStore.init(alloc),
     };
 
     return self;
@@ -69,6 +74,7 @@ pub fn getSocketPathZ(self: *Server) [*:0]const u8 {
 
 pub fn deinit(self: *Server) void {
     self.stop();
+    self.claude_session_store.deinit();
     self.registry.deinit();
     self.alloc.free(self.socket_path);
     self.alloc.destroy(self);

@@ -348,8 +348,23 @@ fn onKeyPressed(
     userdata: c.gpointer,
 ) callconv(.c) c.gboolean {
     const self: *TerminalWidget = @ptrCast(@alignCast(userdata));
-    _ = keyval;
     if (self.surface == null) return 0;
+
+    // Convert keyval to Unicode codepoint for text input
+    const codepoint = c.gdk_keyval_to_unicode(keyval);
+
+    // Build UTF-8 text for printable characters (codepoint >= 0x20, not DEL 0x7f)
+    var text_buf: [8]u8 = undefined;
+    var text_ptr: ?[*:0]const u8 = null;
+    if (codepoint >= 0x20 and codepoint != 0x7f) {
+        if (std.unicode.utf8Encode(@intCast(codepoint), &text_buf)) |len| {
+            text_buf[len] = 0;
+            text_ptr = @ptrCast(&text_buf);
+        } else |_| {}
+    }
+
+    // Compute unshifted codepoint (what the key produces without Shift)
+    const unshifted = c.gdk_keyval_to_unicode(c.gdk_keyval_to_lower(keyval));
 
     const mods = gtkModsToGhostty(state);
     const key_event = c.ghostty_input_key_s{
@@ -357,8 +372,8 @@ fn onKeyPressed(
         .mods = mods,
         .consumed_mods = c.GHOSTTY_MODS_NONE,
         .keycode = keycode,
-        .text = null,
-        .unshifted_codepoint = 0,
+        .text = text_ptr,
+        .unshifted_codepoint = @intCast(unshifted),
         .composing = false,
     };
 
@@ -374,8 +389,10 @@ fn onKeyReleased(
     userdata: c.gpointer,
 ) callconv(.c) void {
     const self: *TerminalWidget = @ptrCast(@alignCast(userdata));
-    _ = keyval;
     if (self.surface == null) return;
+
+    // Compute unshifted codepoint (text not needed for release events)
+    const unshifted = c.gdk_keyval_to_unicode(c.gdk_keyval_to_lower(keyval));
 
     const mods = gtkModsToGhostty(state);
     const key_event = c.ghostty_input_key_s{
@@ -384,7 +401,7 @@ fn onKeyReleased(
         .consumed_mods = c.GHOSTTY_MODS_NONE,
         .keycode = keycode,
         .text = null,
-        .unshifted_codepoint = 0,
+        .unshifted_codepoint = @intCast(unshifted),
         .composing = false,
     };
 

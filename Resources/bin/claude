@@ -18,6 +18,13 @@ find_real_claude() {
     return 1
 }
 
+# Detect platform-specific CLI binary name.
+if [[ "$(uname -s)" == "Linux" ]]; then
+    CMUX_CLI_NAME="cmux-cli"
+else
+    CMUX_CLI_NAME="cmux"
+fi
+
 # Return 0 only when CMUX_SOCKET_PATH points to a live cmux socket.
 cmux_socket_available() {
     local socket="${CMUX_SOCKET_PATH:-}"
@@ -25,8 +32,8 @@ cmux_socket_available() {
 
     local self_dir cmux_bin
     self_dir="$(cd "$(dirname "$0")" && pwd)"
-    cmux_bin="$self_dir/cmux"
-    [[ -x "$cmux_bin" ]] || cmux_bin="$(command -v cmux || true)"
+    cmux_bin="$self_dir/$CMUX_CLI_NAME"
+    [[ -x "$cmux_bin" ]] || cmux_bin="$(command -v "$CMUX_CLI_NAME" || true)"
     [[ -n "$cmux_bin" ]] || return 1
 
     # Keep stale/hung socket checks bounded so claude startup does not block
@@ -78,7 +85,7 @@ done
 
 # Build hooks settings JSON.
 # Claude Code merges --settings additively with the user's own settings.json.
-HOOKS_JSON='{"hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"cmux claude-hook session-start","timeout":10}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cmux claude-hook stop","timeout":10}]}],"Notification":[{"matcher":"","hooks":[{"type":"command","command":"cmux claude-hook notification","timeout":10}]}]}}'
+HOOKS_JSON="{\"hooks\":{\"SessionStart\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"$CMUX_CLI_NAME claude-hook session-start\",\"timeout\":10}]}],\"Stop\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"$CMUX_CLI_NAME claude-hook stop\",\"timeout\":10}]}],\"Notification\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"$CMUX_CLI_NAME claude-hook notification\",\"timeout\":10}]}]}}"
 
 if [[ "$SKIP_SESSION_ID" == true ]]; then
     exec "$REAL_CLAUDE" --settings "$HOOKS_JSON" "$@"
