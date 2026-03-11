@@ -62,10 +62,11 @@ So this roadmap is written from the perspective of an AI agent who is both the b
 - [x] Handle registry for ref-string generation
 
 ### Phase 5: CLI Tool
-- [x] Standalone `cmux-cli` binary (no GTK dependency)
-- [x] 16 commands mirroring all socket methods
+- [x] Standalone `cmux-cli` binary (no GTK dependency, libc only)
+- [x] All 41 socket methods exposed as CLI commands
 - [x] Socket path from `CMUX_SOCKET` / `CMUX_SOCKET_PATH` / default `/tmp/cmux.sock`
 - [x] JSON response output
+- [x] Agent-critical commands: `surface read-text`, `surface send-key`, `surface split`, `surface close`, `pane resize`, `pane swap`
 
 ### Bug Fixes
 - [x] GTK-CRITICAL `gtk_gl_area_queue_render` assertion flood — fixed with realized flag, surface registry, GObject ref counting, onUnrealize callback
@@ -162,6 +163,15 @@ All power features are implemented and working. Total API methods: 41.
 
 - [x] **Pane break/join** — Detach a pane from its current workspace and move it to a new workspace (`pane.break`) or an existing workspace (`pane.join`). Uses `PaneTree.detachPane` for safe removal with sibling promotion and `attachPaneAsRoot` for insertion.
 
+### Phase 6: Dogfooding Readiness ✅ COMPLETE
+
+The CLI tool now covers all 41 socket methods — no gaps between what the socket can do and what the CLI exposes. An agent configuration file (`linux/CLAUDE.md`) provides persistent instructions so future sessions know to use `cmux-cli` for development workflows.
+
+- [x] **Complete CLI coverage** — Added 6 missing commands: `surface read-text` (with `--scrollback` flag), `surface send-key`, `surface split`, `surface close`, `pane resize` (with optional amount), `pane swap`. The CLI now has a 1:1 mapping with all socket API methods.
+- [x] **Agent instructions** — Created `linux/CLAUDE.md` with usage examples for all cmux-cli commands, workflow patterns (parallel splits, workspace management, observability), and architecture notes. This file is auto-loaded by Claude Code when working in the `linux/` directory.
+
+To start dogfooding: copy `zig-out/bin/cmux-cli` to PATH, launch `zig-out/bin/cmux`, and start a new agent session.
+
 ### Priority 6: "Feature parity with macOS" (Long Tail)
 
 These are significant features from macOS that would be valuable but aren't blocking basic use:
@@ -205,8 +215,8 @@ These are significant features from macOS that would be valuable but aren't bloc
 
 ## Current State
 
-As of 2026-03-10: The Linux port builds cleanly, runs on X11, renders terminals via Ghostty's OpenGL renderer, supports split panes and multiple workspaces with sidebar navigation, has a working socket API with 41 methods, a CLI tool, shell integration scripts, desktop notifications via libnotify, a command palette with fuzzy search, workspace colors and pinning, terminal find/search with Ghostty integration, and pane break/join for moving panes between workspaces. Priorities 1-5 (basic usability, agent essentials, session persistence, observability, power features) are complete.
+As of 2026-03-11: The Linux port is ready for dogfooding. All 41 socket API methods have matching CLI commands. The `cmux-cli` binary is standalone (libc only, no GTK) and can be placed in PATH for agent use. Agent instructions are configured via `linux/CLAUDE.md` so future sessions know the workflow.
 
-An AI agent can: read terminal output, send commands and keystrokes, create/close splits, navigate workspaces, resize/swap panes, discover its own terminal context via environment variables, have its workspace layout survive restarts, feed metadata (git branch, status, progress, logs) into the sidebar, receive desktop notifications, discover and execute actions via the command palette API, search terminal content, color-code and pin workspaces, and reorganize panes across workspaces — all through the socket API.
+An AI agent can: read terminal output (`surface read-text --scrollback`), send commands and keystrokes, create/close splits, navigate workspaces, resize/swap panes, discover its own terminal context via environment variables, have its workspace layout survive restarts, feed metadata (git branch, status, progress, logs) into the sidebar, receive desktop notifications, discover and execute actions via the command palette API, search terminal content, color-code and pin workspaces, and reorganize panes across workspaces — all through either the socket API or the `cmux-cli` command-line tool.
 
-The honest assessment: we're ~35-40% of the way to full macOS feature parity, but we're at ~95% of the way to "an AI agent could start dogfooding this as a development environment." Priority 6 (long tail feature parity) is next.
+Phases 0-6 are complete (~35-40% of macOS feature parity, but 100% of what's needed to start using cmux as the agent's own development terminal). Priority 6 (long tail feature parity with macOS) is next.

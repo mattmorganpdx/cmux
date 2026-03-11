@@ -14,8 +14,8 @@ const usage_text =
     \\  tree          Show workspace/pane hierarchy
     \\  workspace     Workspace management (list, create, current, select, close, rename,
     \\                  report-git, set-status, clear-status, add-log, clear-log, set-progress, set-pinned, set-color)
-    \\  surface       Surface management (list, current, search)
-    \\  pane          Pane management (list, break, join)
+    \\  surface       Surface management (list, current, search, read-text, send-key, split, close)
+    \\  pane          Pane management (list, break, join, resize, swap)
     \\  window        Window management (list, current)
     \\  send          Send text to a surface
     \\  notification  Notification management (create, list, clear)
@@ -287,8 +287,72 @@ pub fn main() !void {
                 return;
             };
             try sendAndPrint(socket_path, "surface.search", params, stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "read-text") or std.mem.eql(u8, sub, "read")) {
+            // cmux surface read-text [surface_id] [--scrollback]
+            var surface_id: ?[]const u8 = null;
+            var scrollback = false;
+            while (args.next()) |arg| {
+                if (std.mem.eql(u8, arg, "--scrollback")) {
+                    scrollback = true;
+                } else {
+                    surface_id = arg;
+                }
+            }
+            var params_buf: [256]u8 = undefined;
+            const params = if (surface_id) |sid|
+                if (scrollback)
+                    std.fmt.bufPrint(&params_buf, "{{\"surface_id\":{s},\"scrollback\":true}}", .{sid}) catch {
+                        try stderr.writeAll("Params too long\n");
+                        return;
+                    }
+                else
+                    std.fmt.bufPrint(&params_buf, "{{\"surface_id\":{s}}}", .{sid}) catch {
+                        try stderr.writeAll("Params too long\n");
+                        return;
+                    }
+            else if (scrollback)
+                "{\"scrollback\":true}"
+            else
+                "{}";
+            try sendAndPrint(socket_path, "surface.read_text", params, stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "send-key")) {
+            // cmux surface send-key <key> [surface_id]
+            const key = args.next() orelse {
+                try stderr.writeAll("Usage: cmux surface send-key <key> [surface_id]\n");
+                return;
+            };
+            if (args.next()) |sid| {
+                var params_buf: [256]u8 = undefined;
+                const params = std.fmt.bufPrint(&params_buf, "{{\"key\":\"{s}\",\"surface_id\":{s}}}", .{ key, sid }) catch {
+                    try stderr.writeAll("Params too long\n");
+                    return;
+                };
+                try sendAndPrint(socket_path, "surface.send_key", params, stdout, stderr);
+            } else {
+                var params_buf: [256]u8 = undefined;
+                const params = std.fmt.bufPrint(&params_buf, "{{\"key\":\"{s}\"}}", .{key}) catch {
+                    try stderr.writeAll("Params too long\n");
+                    return;
+                };
+                try sendAndPrint(socket_path, "surface.send_key", params, stdout, stderr);
+            }
+        } else if (std.mem.eql(u8, sub, "split")) {
+            // cmux surface split <direction>
+            const direction = args.next() orelse {
+                try stderr.writeAll("Usage: cmux surface split <left|right|up|down>\n");
+                return;
+            };
+            var params_buf: [256]u8 = undefined;
+            const params = std.fmt.bufPrint(&params_buf, "{{\"direction\":\"{s}\"}}", .{direction}) catch {
+                try stderr.writeAll("Params too long\n");
+                return;
+            };
+            try sendAndPrint(socket_path, "surface.split", params, stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "close")) {
+            // cmux surface close
+            try sendAndPrint(socket_path, "surface.close", "{}", stdout, stderr);
         } else {
-            try stderr.writeAll("Unknown surface subcommand. Use: list, current, search\n");
+            try stderr.writeAll("Unknown surface subcommand. Use: list, current, search, read-text, send-key, split, close\n");
         }
     } else if (std.mem.eql(u8, subcommand, "pane")) {
         const sub = args.next() orelse "list";
@@ -320,8 +384,49 @@ pub fn main() !void {
                 return;
             };
             try sendAndPrint(socket_path, "pane.join", params, stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "resize")) {
+            // cmux pane resize <pane_id> <direction> [amount]
+            const pane_id = args.next() orelse {
+                try stderr.writeAll("Usage: cmux pane resize <pane_id> <left|right|up|down> [amount]\n");
+                return;
+            };
+            const direction = args.next() orelse {
+                try stderr.writeAll("Usage: cmux pane resize <pane_id> <left|right|up|down> [amount]\n");
+                return;
+            };
+            if (args.next()) |amount| {
+                var params_buf: [256]u8 = undefined;
+                const params = std.fmt.bufPrint(&params_buf, "{{\"pane_id\":{s},\"direction\":\"{s}\",\"amount\":{s}}}", .{ pane_id, direction, amount }) catch {
+                    try stderr.writeAll("Params too long\n");
+                    return;
+                };
+                try sendAndPrint(socket_path, "pane.resize", params, stdout, stderr);
+            } else {
+                var params_buf: [256]u8 = undefined;
+                const params = std.fmt.bufPrint(&params_buf, "{{\"pane_id\":{s},\"direction\":\"{s}\"}}", .{ pane_id, direction }) catch {
+                    try stderr.writeAll("Params too long\n");
+                    return;
+                };
+                try sendAndPrint(socket_path, "pane.resize", params, stdout, stderr);
+            }
+        } else if (std.mem.eql(u8, sub, "swap")) {
+            // cmux pane swap <pane_a> <pane_b>
+            const pane_a = args.next() orelse {
+                try stderr.writeAll("Usage: cmux pane swap <pane_a> <pane_b>\n");
+                return;
+            };
+            const pane_b = args.next() orelse {
+                try stderr.writeAll("Usage: cmux pane swap <pane_a> <pane_b>\n");
+                return;
+            };
+            var params_buf: [256]u8 = undefined;
+            const params = std.fmt.bufPrint(&params_buf, "{{\"pane_a\":{s},\"pane_b\":{s}}}", .{ pane_a, pane_b }) catch {
+                try stderr.writeAll("Params too long\n");
+                return;
+            };
+            try sendAndPrint(socket_path, "pane.swap", params, stdout, stderr);
         } else {
-            try stderr.writeAll("Unknown pane subcommand. Use: list, break, join\n");
+            try stderr.writeAll("Unknown pane subcommand. Use: list, break, join, resize, swap\n");
         }
     } else if (std.mem.eql(u8, subcommand, "send")) {
         const text = args.next() orelse {
