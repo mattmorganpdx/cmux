@@ -56,6 +56,7 @@ pub const gtk_stack_add_named = raw.gtk_stack_add_named;
 pub const gtk_stack_remove = raw.gtk_stack_remove;
 pub const gtk_stack_set_visible_child_name = raw.gtk_stack_set_visible_child_name;
 pub const gtk_label_new = raw.gtk_label_new;
+pub const GtkButton = raw.GtkButton;
 pub const gtk_button_new_with_label = raw.gtk_button_new_with_label;
 pub const gtk_widget_set_size_request = raw.gtk_widget_set_size_request;
 pub const gtk_widget_set_visible = raw.gtk_widget_set_visible;
@@ -132,6 +133,12 @@ pub const GDK_KEY_Up = raw.GDK_KEY_Up;
 pub const GDK_KEY_Down = raw.GDK_KEY_Down;
 pub const GDK_KEY_bracketleft = raw.GDK_KEY_bracketleft;
 pub const GDK_KEY_bracketright = raw.GDK_KEY_bracketright;
+pub const GDK_KEY_P = raw.GDK_KEY_P;
+pub const GDK_KEY_p = raw.GDK_KEY_p;
+pub const GDK_KEY_F = raw.GDK_KEY_F;
+pub const GDK_KEY_f = raw.GDK_KEY_f;
+pub const GDK_KEY_Escape = raw.GDK_KEY_Escape;
+pub const GDK_KEY_Return = raw.GDK_KEY_Return;
 pub const gtk_widget_set_hexpand = raw.gtk_widget_set_hexpand;
 pub const gtk_widget_set_vexpand = raw.gtk_widget_set_vexpand;
 pub const gtk_widget_queue_resize = raw.gtk_widget_queue_resize;
@@ -157,10 +164,42 @@ pub const gtk_gesture_click_new = raw.gtk_gesture_click_new;
 pub const gtk_gesture_single_set_button = raw.gtk_gesture_single_set_button;
 pub const gtk_gesture_single_get_current_button = raw.gtk_gesture_single_get_current_button;
 
+// GtkCssProvider (theming)
+pub const GtkCssProvider = raw.GtkCssProvider;
+pub const gtk_css_provider_new = raw.gtk_css_provider_new;
+pub const gtk_css_provider_load_from_string = raw.gtk_css_provider_load_from_string;
+pub const gtk_style_context_add_provider_for_display = raw.gtk_style_context_add_provider_for_display;
+pub const GTK_STYLE_PROVIDER_PRIORITY_APPLICATION = raw.GTK_STYLE_PROVIDER_PRIORITY_APPLICATION;
+
+// GtkOverlay
+pub const GtkOverlay = raw.GtkOverlay;
+pub const gtk_overlay_new = raw.gtk_overlay_new;
+pub const gtk_overlay_set_child = raw.gtk_overlay_set_child;
+pub const gtk_overlay_add_overlay = raw.gtk_overlay_add_overlay;
+
+// GtkSearchEntry
+pub const GtkSearchEntry = raw.GtkSearchEntry;
+pub const gtk_search_entry_new = raw.gtk_search_entry_new;
+pub const gtk_search_entry_get_text = raw.gtk_search_entry_get_text;
+
+// GtkEditable (interface for entries/search entries)
+pub const gtk_editable_get_text = raw.gtk_editable_get_text;
+pub const gtk_editable_set_text = raw.gtk_editable_set_text;
+
+// Widget alignment
+pub const gtk_widget_set_halign = raw.gtk_widget_set_halign;
+pub const gtk_widget_set_valign = raw.gtk_widget_set_valign;
+pub const GTK_ALIGN_START = raw.GTK_ALIGN_START;
+pub const GTK_ALIGN_END = raw.GTK_ALIGN_END;
+pub const GTK_ALIGN_CENTER = raw.GTK_ALIGN_CENTER;
+pub const GTK_ALIGN_FILL = raw.GTK_ALIGN_FILL;
+
 // GLib/GObject functions
 pub const g_application_run = raw.g_application_run;
 pub const g_object_ref = raw.g_object_ref;
 pub const g_object_unref = raw.g_object_unref;
+pub const g_object_set_data = raw.g_object_set_data;
+pub const g_object_get_data = raw.g_object_get_data;
 pub const g_signal_connect_data = raw.g_signal_connect_data;
 pub const g_idle_add = raw.g_idle_add;
 pub const g_timeout_add_seconds = raw.g_timeout_add_seconds;
@@ -251,6 +290,10 @@ pub const GHOSTTY_ACTION_NEW_SPLIT = raw.GHOSTTY_ACTION_NEW_SPLIT;
 pub const GHOSTTY_ACTION_CLOSE_WINDOW = raw.GHOSTTY_ACTION_CLOSE_WINDOW;
 pub const GHOSTTY_ACTION_CELL_SIZE = raw.GHOSTTY_ACTION_CELL_SIZE;
 pub const GHOSTTY_ACTION_PWD = raw.GHOSTTY_ACTION_PWD;
+pub const GHOSTTY_ACTION_START_SEARCH = raw.GHOSTTY_ACTION_START_SEARCH;
+pub const GHOSTTY_ACTION_END_SEARCH = raw.GHOSTTY_ACTION_END_SEARCH;
+pub const GHOSTTY_ACTION_SEARCH_TOTAL = raw.GHOSTTY_ACTION_SEARCH_TOTAL;
+pub const GHOSTTY_ACTION_SEARCH_SELECTED = raw.GHOSTTY_ACTION_SEARCH_SELECTED;
 pub const GHOSTTY_TARGET_SURFACE = raw.GHOSTTY_TARGET_SURFACE;
 pub const GHOSTTY_SPLIT_DIRECTION_RIGHT = raw.GHOSTTY_SPLIT_DIRECTION_RIGHT;
 pub const GHOSTTY_SPLIT_DIRECTION_DOWN = raw.GHOSTTY_SPLIT_DIRECTION_DOWN;

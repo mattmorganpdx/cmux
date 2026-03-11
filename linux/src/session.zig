@@ -23,6 +23,7 @@ pub const WorkspaceSnapshot = struct {
     title: []const u8,
     cwd: []const u8,
     pinned: bool,
+    color: []const u8,
     focused_pane: ?u64,
     next_node_id: u64,
     layout: ?LayoutSnapshot,
@@ -77,6 +78,7 @@ fn captureWorkspace(alloc: Allocator, ws: *Workspace) !WorkspaceSnapshot {
         .title = try alloc.dupe(u8, ws.getTitle()),
         .cwd = try alloc.dupe(u8, if (ws.cwd_len > 0) ws.cwd_buf[0..ws.cwd_len] else ""),
         .pinned = ws.pinned,
+        .color = try alloc.dupe(u8, ws.getColor() orelse ""),
         .focused_pane = ws.pane_tree.focused_pane,
         .next_node_id = ws.pane_tree.next_id,
         .layout = layout,
@@ -145,6 +147,8 @@ fn serializeWorkspace(alloc: Allocator, buf: *Buf, ws: *const WorkspaceSnapshot)
     try appendJsonString(alloc, buf, ws.cwd);
     try buf.appendSlice(alloc, ",\"pinned\":");
     try buf.appendSlice(alloc, if (ws.pinned) "true" else "false");
+    try buf.appendSlice(alloc, ",\"color\":");
+    try appendJsonString(alloc, buf, ws.color);
     try buf.appendSlice(alloc, ",\"focused_pane\":");
     if (ws.focused_pane) |fp| {
         try appendInt(alloc, buf, fp);
@@ -255,6 +259,7 @@ fn deserializeWorkspace(alloc: Allocator, val: std.json.Value) !WorkspaceSnapsho
     const title = getJsonString(val, "title") orelse "Workspace";
     const cwd = getJsonString(val, "cwd") orelse "";
     const pinned = getJsonBool(val, "pinned") orelse false;
+    const color = getJsonString(val, "color") orelse "";
     const focused_pane = getJsonOptionalInt(val, "focused_pane");
     const next_node_id: u64 = @intCast(getJsonInt(val, "next_node_id") orelse 1);
 
@@ -269,6 +274,7 @@ fn deserializeWorkspace(alloc: Allocator, val: std.json.Value) !WorkspaceSnapsho
         .title = try alloc.dupe(u8, title),
         .cwd = try alloc.dupe(u8, cwd),
         .pinned = pinned,
+        .color = try alloc.dupe(u8, color),
         .focused_pane = if (focused_pane) |fp| @intCast(fp) else null,
         .next_node_id = next_node_id,
         .layout = layout,
@@ -475,6 +481,7 @@ pub fn freeSessionSnapshot(alloc: Allocator, snap: *const SessionSnapshot) void 
     for (snap.workspaces) |*ws| {
         alloc.free(ws.title);
         alloc.free(ws.cwd);
+        alloc.free(ws.color);
         if (ws.layout) |layout| {
             freeLayout(alloc, &layout);
         }

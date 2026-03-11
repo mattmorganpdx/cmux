@@ -6,6 +6,8 @@ const PaneTree = @import("pane_tree.zig");
 const TabManager = @import("tab_manager.zig");
 const Workspace = @import("workspace.zig");
 const Sidebar = @import("sidebar.zig");
+const CommandPalette = @import("command_palette.zig");
+const SearchOverlay = @import("search_overlay.zig");
 const session = @import("session.zig");
 
 const log = std.log.scoped(.window);
@@ -39,6 +41,12 @@ sidebar: *Sidebar,
 
 /// Whether the sidebar is currently visible.
 sidebar_visible: bool = true,
+
+/// The command palette overlay.
+command_palette: *CommandPalette,
+
+/// The terminal search overlay.
+search_overlay: *SearchOverlay,
 
 /// Allocator
 alloc: Allocator,
@@ -75,6 +83,8 @@ pub fn create(gtk_app: *c.GtkApplication, app: *App) !*Window {
         .node_widgets = std.AutoHashMap(PaneTree.NodeId, *c.GtkWidget).init(alloc),
         .content_box = content_box,
         .sidebar = undefined, // will be set below
+        .command_palette = undefined, // will be set below
+        .search_overlay = undefined, // will be set below
         .alloc = alloc,
     };
 
@@ -91,7 +101,21 @@ pub fn create(gtk_app: *c.GtkApplication, app: *App) !*Window {
     c.gtk_box_append(main_hbox, @ptrCast(@alignCast(sidebar_sep)));
     c.gtk_box_append(main_hbox, @as(*c.GtkWidget, @ptrCast(content_box)));
 
-    c.gtk_window_set_child(@ptrCast(gtk_window), @ptrCast(main_hbox));
+    // Wrap in overlay for command palette + search overlay
+    const overlay: *c.GtkOverlay = @ptrCast(@alignCast(c.gtk_overlay_new()));
+    c.gtk_overlay_set_child(overlay, @as(*c.GtkWidget, @ptrCast(main_hbox)));
+
+    // Create command palette and add as overlay
+    const palette = try CommandPalette.create(alloc, self);
+    self.command_palette = palette;
+    c.gtk_overlay_add_overlay(overlay, palette.widget());
+
+    // Create search overlay and add as overlay
+    const search = try SearchOverlay.create(alloc);
+    self.search_overlay = search;
+    c.gtk_overlay_add_overlay(overlay, search.widget());
+
+    c.gtk_window_set_child(@ptrCast(gtk_window), @as(*c.GtkWidget, @ptrCast(@alignCast(overlay))));
 
     // Create the first workspace with a single terminal pane
     const ws = try self.tab_manager.createWorkspace();
@@ -145,6 +169,8 @@ pub fn createFromSession(gtk_app: *c.GtkApplication, app: *App, snap: *const ses
         .node_widgets = std.AutoHashMap(PaneTree.NodeId, *c.GtkWidget).init(alloc),
         .content_box = content_box,
         .sidebar = undefined,
+        .command_palette = undefined,
+        .search_overlay = undefined,
         .alloc = alloc,
     };
 
@@ -157,7 +183,20 @@ pub fn createFromSession(gtk_app: *c.GtkApplication, app: *App, snap: *const ses
     c.gtk_box_append(main_hbox, sidebar.widget());
     c.gtk_box_append(main_hbox, @ptrCast(@alignCast(sidebar_sep)));
     c.gtk_box_append(main_hbox, @as(*c.GtkWidget, @ptrCast(content_box)));
-    c.gtk_window_set_child(@ptrCast(gtk_window), @ptrCast(main_hbox));
+
+    // Wrap in overlay for command palette + search overlay
+    const overlay: *c.GtkOverlay = @ptrCast(@alignCast(c.gtk_overlay_new()));
+    c.gtk_overlay_set_child(overlay, @as(*c.GtkWidget, @ptrCast(main_hbox)));
+
+    const palette = try CommandPalette.create(alloc, self);
+    self.command_palette = palette;
+    c.gtk_overlay_add_overlay(overlay, palette.widget());
+
+    const search = try SearchOverlay.create(alloc);
+    self.search_overlay = search;
+    c.gtk_overlay_add_overlay(overlay, search.widget());
+
+    c.gtk_window_set_child(@ptrCast(gtk_window), @as(*c.GtkWidget, @ptrCast(@alignCast(overlay))));
 
     // Restore workspaces from snapshot
     if (snap.workspaces.len == 0) {
@@ -171,6 +210,7 @@ pub fn createFromSession(gtk_app: *c.GtkApplication, app: *App, snap: *const ses
             ws.setTitle(ws_snap.title);
             if (ws_snap.cwd.len > 0) ws.setCwd(ws_snap.cwd);
             ws.pinned = ws_snap.pinned;
+            if (ws_snap.color.len > 0) ws.setColor(ws_snap.color);
 
             // Restore pane tree layout
             _ = session.restorePaneTree(&ws.pane_tree, ws_snap) catch |err| {
@@ -219,6 +259,8 @@ pub fn deinit(self: *Window) void {
     }
     self.pane_widgets.deinit();
     self.node_widgets.deinit();
+    self.search_overlay.deinit();
+    self.command_palette.deinit();
     self.sidebar.deinit();
     self.tab_manager.deinit();
     self.alloc.destroy(self);
@@ -575,6 +617,135 @@ pub fn switchWorkspace(self: *Window, index: usize) !void {
 pub fn toggleSidebar(self: *Window) void {
     self.sidebar_visible = !self.sidebar_visible;
     c.gtk_widget_set_visible(self.sidebar.widget(), if (self.sidebar_visible) 1 else 0);
+}
+
+/// Toggle the command palette.
+pub fn toggleCommandPalette(self: *Window) void {
+    self.command_palette.toggle();
+}
+
+/// Show the terminal search overlay.
+pub fn showSearch(self: *Window) void {
+    // Get the focused terminal surface
+    const ws = self.tab_manager.selectedWorkspace() orelse return;
+    const focused = ws.pane_tree.focused_pane orelse return;
+    const tw = self.pane_widgets.get(focused) orelse return;
+    self.search_overlay.show(tw.surface);
+}
+
+/// Hide the terminal search overlay.
+pub fn hideSearch(self: *Window) void {
+    self.search_overlay.hide();
+}
+
+/// Break a pane out into a new workspace.
+pub fn breakPaneToNewWorkspace(self: *Window, pane_id: PaneTree.NodeId) !void {
+    const ws = self.tab_manager.selectedWorkspace() orelse return;
+
+    // Can't break the only pane
+    if (ws.pane_tree.paneCount() <= 1) return error.LastPane;
+
+    // Detach from the current tree (promotes sibling)
+    _ = try ws.pane_tree.detachPane(pane_id);
+
+    // Rebuild the current workspace's GTK widget tree
+    try self.rebuildCurrentWorkspace();
+
+    // Create a new workspace
+    const alloc = self.alloc;
+    const new_ws = try alloc.create(Workspace);
+    new_ws.* = Workspace.init(alloc, self.tab_manager.next_id);
+    self.tab_manager.next_id += 1;
+
+    // Attach the pane to the new workspace's tree
+    try new_ws.pane_tree.attachPaneAsRoot(pane_id);
+    try self.tab_manager.workspaces.append(alloc, new_ws);
+
+    // Update the terminal widget's workspace ID
+    if (self.pane_widgets.get(pane_id)) |tw| {
+        tw.workspace_id = new_ws.id;
+    }
+
+    // Rebuild sidebar
+    self.sidebar.rebuild();
+
+    log.info("Pane {d} broken to new workspace {d}", .{ pane_id, new_ws.id });
+}
+
+/// Join (move) a pane from any workspace to the target workspace.
+pub fn joinPaneToWorkspace(self: *Window, pane_id: PaneTree.NodeId, target_ws_id: Workspace.WorkspaceId) !void {
+    // Find source workspace that contains this pane
+    var src_ws: ?*Workspace = null;
+    for (self.tab_manager.workspaces.items) |ws_item| {
+        if (ws_item.pane_tree.getNode(pane_id) != null) {
+            src_ws = ws_item;
+            break;
+        }
+    }
+    const source = src_ws orelse return error.PaneNotFound;
+
+    // Find target workspace
+    var target_ws: ?*Workspace = null;
+    for (self.tab_manager.workspaces.items) |ws_item| {
+        if (ws_item.id == target_ws_id) {
+            target_ws = ws_item;
+            break;
+        }
+    }
+    const target = target_ws orelse return error.WorkspaceNotFound;
+    if (source.id == target.id) return error.SameWorkspace;
+
+    // Can't move the only pane
+    if (source.pane_tree.paneCount() <= 1) return error.LastPane;
+
+    // Detach from source tree
+    _ = try source.pane_tree.detachPane(pane_id);
+
+    // Attach to target tree
+    if (target.pane_tree.root) |root_id| {
+        // Split the existing root to accommodate this pane
+        const new_split_id = target.pane_tree.nextNodeId();
+        try target.pane_tree.nodes.put(new_split_id, .{ .split = .{
+            .id = new_split_id,
+            .parent = null,
+            .orientation = .horizontal,
+            .divider_position = 0.5,
+            .first = root_id,
+            .second = pane_id,
+        } });
+
+        // Update old root's parent
+        var root_node = target.pane_tree.nodes.get(root_id) orelse return error.InvalidTree;
+        switch (root_node) {
+            .pane => |*p| p.parent = new_split_id,
+            .split => |*s| s.parent = new_split_id,
+        }
+        try target.pane_tree.nodes.put(root_id, root_node);
+
+        // Add the pane to target tree
+        try target.pane_tree.nodes.put(pane_id, .{ .pane = .{
+            .id = pane_id,
+            .parent = new_split_id,
+        } });
+
+        target.pane_tree.root = new_split_id;
+        if (pane_id >= target.pane_tree.next_id) {
+            target.pane_tree.next_id = pane_id + 1;
+        }
+    } else {
+        try target.pane_tree.attachPaneAsRoot(pane_id);
+    }
+
+    // Update the terminal's workspace ID
+    if (self.pane_widgets.get(pane_id)) |tw| {
+        tw.workspace_id = target.id;
+    }
+
+    // Rebuild current workspace if source is selected
+    try self.rebuildCurrentWorkspace();
+
+    self.sidebar.rebuild();
+    log.info("Pane {d} joined to workspace {d}", .{ pane_id, target.id });
 }
 
 /// Switch to the next workspace.

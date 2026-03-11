@@ -70,9 +70,41 @@ pub fn main() !void {
     }
 }
 
+/// Application CSS theme — workspace accent colors, command palette, search overlay.
+const app_css =
+    \\.ws-accent-red { background-color: #e74c3c; }
+    \\.ws-accent-blue { background-color: #3498db; }
+    \\.ws-accent-green { background-color: #2ecc71; }
+    \\.ws-accent-yellow { background-color: #f1c40f; }
+    \\.ws-accent-purple { background-color: #9b59b6; }
+    \\.ws-accent-orange { background-color: #e67e22; }
+    \\.ws-accent-pink { background-color: #e91e63; }
+    \\.ws-accent-cyan { background-color: #00bcd4; }
+    \\
+    \\.command-palette { background-color: rgba(30,30,30,0.95); border-radius: 8px; padding: 8px; }
+    \\.command-palette entry { margin-bottom: 4px; }
+    \\
+    \\.search-overlay { background-color: rgba(30,30,30,0.95); border-radius: 0 0 8px 8px; padding: 6px 12px; }
+;
+
+fn setupCssProvider() void {
+    const provider = c.gtk_css_provider_new() orelse return;
+    c.gtk_css_provider_load_from_string(provider, app_css);
+    const display = c.gdk_display_get_default() orelse return;
+    c.gtk_style_context_add_provider_for_display(
+        display,
+        @ptrCast(provider),
+        c.GTK_STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    log.info("CSS provider loaded", .{});
+}
+
 fn onActivate(gtk_app: *c.GtkApplication, _: c.gpointer) callconv(.c) void {
     // Initialize libnotify for desktop notifications
     _ = c.notify_init("cmux");
+
+    // Set up custom CSS theme
+    setupCssProvider();
 
     // Initialize the Ghostty backend on first activation
     if (global_app == null) {

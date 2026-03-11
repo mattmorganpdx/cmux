@@ -146,23 +146,27 @@ All observability items are implemented and working. Total API methods: 34.
   - `notification.list` — list stored notifications (64-entry ring buffer, most recent first)
   - `notification.clear` — clear one or all notifications
 
-### Priority 5: "Can I organize complex workflows?" (Power Features)
+### Priority 5: "Can I organize complex workflows?" (Power Features) ✅ COMPLETE
 
-- [ ] **Command palette** — Fuzzy search for all actions. On Linux, a GtkSearchEntry + GtkListBox popup.
+All power features are implemented and working. Total API methods: 41.
 
-- [ ] **Workspace colors** — Visual differentiation between workspaces.
+- [x] **GTK CSS provider** — Application-wide CSS loaded at startup via `GtkCssProvider`. Defines workspace accent color classes (8 colors), command palette styles, and search overlay styles.
 
-- [ ] **Workspace pinning** — Pin important workspaces to the top of the sidebar.
+- [x] **Workspace pinning** — Pin workspaces to the top of the sidebar via `workspace.set_pinned`. Two-pass sidebar rebuild (pinned first, then unpinned). Uses `g_object_set_data`/`g_object_get_data` for real workspace index tracking on GtkListBoxRows.
 
-- [ ] **Multi-window** — Multiple independent GTK windows, each with their own workspace set.
+- [x] **Workspace colors** — 8-color accent palette (red, blue, green, yellow, purple, orange, pink, cyan). Sidebar rows show a 4px colored accent bar. Persisted in session. Set via `workspace.set_color`.
 
-- [ ] **Pane break/join** — Move a pane to a new workspace, or pull a pane from another workspace.
+- [x] **Command palette** — GtkSearchEntry + GtkListBox overlay with 11 registered actions. Case-insensitive substring fuzzy matching. Arrow key navigation, Enter to execute, Escape to dismiss. Ctrl+Shift+P shortcut. Socket API: `command_palette.list`, `command_palette.execute`.
 
-- [ ] **Terminal find/search** — Search within terminal scrollback.
+- [x] **Terminal find/search** — Search overlay with GtkSearchEntry + match count label + close button. Integrates with Ghostty's search API (`search:forward`, `search:next`, `search:prev`, `search:close`). Match count updated via action callbacks. Ctrl+Shift+F shortcut. Socket API: `surface.search`.
+
+- [x] **Pane break/join** — Detach a pane from its current workspace and move it to a new workspace (`pane.break`) or an existing workspace (`pane.join`). Uses `PaneTree.detachPane` for safe removal with sibling promotion and `attachPaneAsRoot` for insertion.
 
 ### Priority 6: "Feature parity with macOS" (Long Tail)
 
 These are significant features from macOS that would be valuable but aren't blocking basic use:
+
+- [ ] **Multi-window** — Multiple independent GTK windows, each with their own workspace set. Requires deep refactoring of single-window architecture (global_window, socket handler dispatch, session persistence).
 
 - [ ] **Browser panel** — Embedded web browser (WebKitGTK on Linux). The macOS version has 80+ automation API methods. This is essentially a separate product.
 
@@ -201,6 +205,8 @@ These are significant features from macOS that would be valuable but aren't bloc
 
 ## Current State
 
-As of 2026-03-10: The Linux port builds cleanly, runs on X11, renders terminals via Ghostty's OpenGL renderer, supports split panes and multiple workspaces with sidebar navigation, has a working socket API with 34 methods, a CLI tool, shell integration scripts, and desktop notifications via libnotify. Priorities 1-4 (basic usability, agent essentials, session persistence, observability) are complete. An AI agent can read terminal output, send commands and keystrokes, create/close splits, navigate workspaces, resize/swap panes, discover its own terminal context via environment variables, have its workspace layout survive restarts, feed metadata (git branch, status, progress, logs) into the sidebar, and receive desktop notifications — all through the socket API.
+As of 2026-03-10: The Linux port builds cleanly, runs on X11, renders terminals via Ghostty's OpenGL renderer, supports split panes and multiple workspaces with sidebar navigation, has a working socket API with 41 methods, a CLI tool, shell integration scripts, desktop notifications via libnotify, a command palette with fuzzy search, workspace colors and pinning, terminal find/search with Ghostty integration, and pane break/join for moving panes between workspaces. Priorities 1-5 (basic usability, agent essentials, session persistence, observability, power features) are complete.
 
-The honest assessment: we're ~30-35% of the way to full macOS feature parity, but we're at ~90% of the way to "an AI agent could start dogfooding this as a development environment." Priority 5 (power features) is next.
+An AI agent can: read terminal output, send commands and keystrokes, create/close splits, navigate workspaces, resize/swap panes, discover its own terminal context via environment variables, have its workspace layout survive restarts, feed metadata (git branch, status, progress, logs) into the sidebar, receive desktop notifications, discover and execute actions via the command palette API, search terminal content, color-code and pin workspaces, and reorganize panes across workspaces — all through the socket API.
+
+The honest assessment: we're ~35-40% of the way to full macOS feature parity, but we're at ~95% of the way to "an AI agent could start dogfooding this as a development environment." Priority 6 (long tail feature parity) is next.

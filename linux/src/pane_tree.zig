@@ -180,7 +180,7 @@ pub fn paneCount(self: *const PaneTree) usize {
 // Mutations
 // ------------------------------------------------------------------
 
-fn nextNodeId(self: *PaneTree) NodeId {
+pub fn nextNodeId(self: *PaneTree) NodeId {
     const id = self.next_id;
     self.next_id += 1;
     return id;
@@ -320,6 +320,83 @@ pub fn close(self: *PaneTree, pane_id: NodeId) !?NodeId {
     // Focus the sibling (or its first pane child)
     self.focused_pane = self.firstPaneIn(sibling_id);
     return sibling_id;
+}
+
+/// Detach a pane from the tree, promoting its sibling.
+/// Unlike close(), the pane node is removed from *this* tree but not destroyed.
+/// Returns the sibling that was promoted (or null if the pane was root).
+/// The caller is responsible for re-parenting the pane into another tree.
+pub fn detachPane(self: *PaneTree, pane_id: NodeId) !?NodeId {
+    const pane_node = self.nodes.get(pane_id) orelse return error.PaneNotFound;
+    const parent_id = switch (pane_node) {
+        .pane => |p| p.parent,
+        else => return error.NotAPane,
+    };
+
+    // Remove the pane from this tree
+    _ = self.nodes.remove(pane_id);
+
+    if (parent_id == null) {
+        // This was the only pane (root)
+        self.root = null;
+        self.focused_pane = null;
+        return null;
+    }
+
+    const split_parent = self.nodes.get(parent_id.?) orelse return error.InvalidTree;
+    const sibling_id = switch (split_parent) {
+        .split => |s| if (s.first == pane_id) s.second else s.first,
+        else => return error.InvalidTree,
+    };
+
+    const grandparent_id = switch (split_parent) {
+        .split => |s| s.parent,
+        else => null,
+    };
+
+    // Remove the split node
+    _ = self.nodes.remove(parent_id.?);
+
+    // Update the sibling's parent to the grandparent
+    var sibling = self.nodes.get(sibling_id) orelse return error.InvalidTree;
+    switch (sibling) {
+        .pane => |*p| p.parent = grandparent_id,
+        .split => |*s| s.parent = grandparent_id,
+    }
+    try self.nodes.put(sibling_id, sibling);
+
+    // Update the grandparent to point to the sibling
+    if (grandparent_id) |gid| {
+        var gp = self.nodes.get(gid) orelse return error.InvalidTree;
+        switch (gp) {
+            .split => |*s| {
+                if (s.first == parent_id.?) {
+                    s.first = sibling_id;
+                } else if (s.second == parent_id.?) {
+                    s.second = sibling_id;
+                }
+                try self.nodes.put(gid, .{ .split = s.* });
+            },
+            else => return error.InvalidTree,
+        }
+    } else {
+        self.root = sibling_id;
+    }
+
+    // Focus the sibling
+    self.focused_pane = self.firstPaneIn(sibling_id);
+    return sibling_id;
+}
+
+/// Attach a pane as the sole root of an empty tree.
+pub fn attachPaneAsRoot(self: *PaneTree, pane_id: NodeId) !void {
+    try self.nodes.put(pane_id, .{ .pane = .{ .id = pane_id, .parent = null } });
+    self.root = pane_id;
+    self.focused_pane = pane_id;
+    // Ensure next_id is past this pane_id
+    if (pane_id >= self.next_id) {
+        self.next_id = pane_id + 1;
+    }
 }
 
 /// Find the first (leftmost/topmost) pane in a subtree.

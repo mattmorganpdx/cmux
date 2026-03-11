@@ -16,6 +16,10 @@ title: [256]u8 = [_]u8{0} ** 256,
 title_len: usize = 0,
 pinned: bool = false,
 
+/// Accent color name (from predefined palette).
+color: [32]u8 = [_]u8{0} ** 32,
+color_len: usize = 0,
+
 /// The pane tree managing the split layout for this workspace.
 pane_tree: PaneTree,
 
@@ -67,6 +71,34 @@ pub fn getTitle(self: *const Workspace) []const u8 {
         return "Workspace";
     }
     return self.title[0..self.title_len];
+}
+
+/// Predefined color palette names.
+pub const valid_colors = [_][]const u8{
+    "red", "blue", "green", "yellow", "purple", "orange", "pink", "cyan",
+};
+
+pub fn setColor(self: *Workspace, name: []const u8) void {
+    const len = @min(name.len, self.color.len);
+    @memcpy(self.color[0..len], name[0..len]);
+    self.color_len = len;
+}
+
+pub fn clearColor(self: *Workspace) void {
+    self.color_len = 0;
+}
+
+pub fn getColor(self: *const Workspace) ?[]const u8 {
+    if (self.color_len == 0) return null;
+    return self.color[0..self.color_len];
+}
+
+/// Validate that a color name is in the predefined palette.
+pub fn isValidColor(name: []const u8) bool {
+    for (valid_colors) |c| {
+        if (std.mem.eql(u8, name, c)) return true;
+    }
+    return false;
 }
 
 pub fn setGitBranch(self: *Workspace, branch: []const u8) void {

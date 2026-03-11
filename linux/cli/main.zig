@@ -13,12 +13,13 @@ const usage_text =
     \\  capabilities  List available API methods
     \\  tree          Show workspace/pane hierarchy
     \\  workspace     Workspace management (list, create, current, select, close, rename,
-    \\                  report-git, set-status, clear-status, add-log, clear-log, set-progress)
-    \\  surface       Surface management (list, current)
-    \\  pane          Pane management (list)
+    \\                  report-git, set-status, clear-status, add-log, clear-log, set-progress, set-pinned, set-color)
+    \\  surface       Surface management (list, current, search)
+    \\  pane          Pane management (list, break, join)
     \\  window        Window management (list, current)
     \\  send          Send text to a surface
     \\  notification  Notification management (create, list, clear)
+    \\  palette       Command palette (list, execute)
     \\
     \\Environment:
     \\  CMUX_SOCKET       Socket path override
@@ -222,6 +223,44 @@ pub fn main() !void {
                 };
                 try sendAndPrint(socket_path, "workspace.set_progress", params, stdout, stderr);
             }
+        } else if (std.mem.eql(u8, sub, "set-pinned")) {
+            // cmux workspace set-pinned <id> <true|false>
+            const id_str = args.next() orelse {
+                try stderr.writeAll("Usage: cmux workspace set-pinned <id> <true|false>\n");
+                return;
+            };
+            const val = args.next() orelse {
+                try stderr.writeAll("Usage: cmux workspace set-pinned <id> <true|false>\n");
+                return;
+            };
+            var params_buf: [256]u8 = undefined;
+            const params = std.fmt.bufPrint(&params_buf, "{{\"id\":{s},\"pinned\":{s}}}", .{ id_str, val }) catch {
+                try stderr.writeAll("Params too long\n");
+                return;
+            };
+            try sendAndPrint(socket_path, "workspace.set_pinned", params, stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "set-color")) {
+            // cmux workspace set-color <id> <color|clear>
+            const id_str = args.next() orelse {
+                try stderr.writeAll("Usage: cmux workspace set-color <id> <red|blue|green|yellow|purple|orange|pink|cyan|clear>\n");
+                return;
+            };
+            const color_val = args.next() orelse {
+                try stderr.writeAll("Usage: cmux workspace set-color <id> <red|blue|green|yellow|purple|orange|pink|cyan|clear>\n");
+                return;
+            };
+            var params_buf: [256]u8 = undefined;
+            const params = if (std.mem.eql(u8, color_val, "clear"))
+                std.fmt.bufPrint(&params_buf, "{{\"id\":{s},\"color\":\"\"}}", .{id_str}) catch {
+                    try stderr.writeAll("Params too long\n");
+                    return;
+                }
+            else
+                std.fmt.bufPrint(&params_buf, "{{\"id\":{s},\"color\":\"{s}\"}}", .{ id_str, color_val }) catch {
+                    try stderr.writeAll("Params too long\n");
+                    return;
+                };
+            try sendAndPrint(socket_path, "workspace.set_color", params, stdout, stderr);
         } else if (std.mem.eql(u8, sub, "next")) {
             try sendAndPrint(socket_path, "workspace.next", "{}", stdout, stderr);
         } else if (std.mem.eql(u8, sub, "previous") or std.mem.eql(u8, sub, "prev")) {
@@ -229,7 +268,7 @@ pub fn main() !void {
         } else if (std.mem.eql(u8, sub, "last")) {
             try sendAndPrint(socket_path, "workspace.last", "{}", stdout, stderr);
         } else {
-            try stderr.writeAll("Unknown workspace subcommand. Use: list, create, current, select, close, rename,\n  report-git, set-status, clear-status, add-log, clear-log, set-progress, next, previous, last\n");
+            try stderr.writeAll("Unknown workspace subcommand. Use: list, create, current, select, close, rename,\n  report-git, set-status, clear-status, add-log, clear-log, set-progress, set-pinned, set-color, next, previous, last\n");
         }
     } else if (std.mem.eql(u8, subcommand, "surface")) {
         const sub = args.next() orelse "list";
@@ -237,15 +276,52 @@ pub fn main() !void {
             try sendAndPrint(socket_path, "surface.list", "{}", stdout, stderr);
         } else if (std.mem.eql(u8, sub, "current")) {
             try sendAndPrint(socket_path, "surface.current", "{}", stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "search")) {
+            const search_text = args.next() orelse {
+                try stderr.writeAll("Usage: cmux surface search <text>\n");
+                return;
+            };
+            var params_buf: [4096]u8 = undefined;
+            const params = std.fmt.bufPrint(&params_buf, "{{\"text\":\"{s}\"}}", .{search_text}) catch {
+                try stderr.writeAll("Text too long\n");
+                return;
+            };
+            try sendAndPrint(socket_path, "surface.search", params, stdout, stderr);
         } else {
-            try stderr.writeAll("Unknown surface subcommand. Use: list, current\n");
+            try stderr.writeAll("Unknown surface subcommand. Use: list, current, search\n");
         }
     } else if (std.mem.eql(u8, subcommand, "pane")) {
         const sub = args.next() orelse "list";
         if (std.mem.eql(u8, sub, "list")) {
             try sendAndPrint(socket_path, "pane.list", "{}", stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "break")) {
+            const pane_id = args.next() orelse {
+                try stderr.writeAll("Usage: cmux pane break <pane_id>\n");
+                return;
+            };
+            var params_buf: [256]u8 = undefined;
+            const params = std.fmt.bufPrint(&params_buf, "{{\"pane_id\":{s}}}", .{pane_id}) catch {
+                try stderr.writeAll("Invalid pane_id\n");
+                return;
+            };
+            try sendAndPrint(socket_path, "pane.break", params, stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "join")) {
+            const pane_id = args.next() orelse {
+                try stderr.writeAll("Usage: cmux pane join <pane_id> <workspace_id>\n");
+                return;
+            };
+            const workspace_id = args.next() orelse {
+                try stderr.writeAll("Usage: cmux pane join <pane_id> <workspace_id>\n");
+                return;
+            };
+            var params_buf: [256]u8 = undefined;
+            const params = std.fmt.bufPrint(&params_buf, "{{\"pane_id\":{s},\"workspace_id\":{s}}}", .{ pane_id, workspace_id }) catch {
+                try stderr.writeAll("Params too long\n");
+                return;
+            };
+            try sendAndPrint(socket_path, "pane.join", params, stdout, stderr);
         } else {
-            try stderr.writeAll("Unknown pane subcommand. Use: list\n");
+            try stderr.writeAll("Unknown pane subcommand. Use: list, break, join\n");
         }
     } else if (std.mem.eql(u8, subcommand, "send")) {
         const text = args.next() orelse {
@@ -305,6 +381,24 @@ pub fn main() !void {
             }
         } else {
             try stderr.writeAll("Unknown notification subcommand. Use: create, list, clear\n");
+        }
+    } else if (std.mem.eql(u8, subcommand, "palette")) {
+        const sub = args.next() orelse "list";
+        if (std.mem.eql(u8, sub, "list")) {
+            try sendAndPrint(socket_path, "command_palette.list", "{}", stdout, stderr);
+        } else if (std.mem.eql(u8, sub, "execute") or std.mem.eql(u8, sub, "exec")) {
+            const action_name = args.next() orelse {
+                try stderr.writeAll("Usage: cmux palette execute <action-name>\n");
+                return;
+            };
+            var params_buf: [512]u8 = undefined;
+            const params = std.fmt.bufPrint(&params_buf, "{{\"action\":\"{s}\"}}", .{action_name}) catch {
+                try stderr.writeAll("Action name too long\n");
+                return;
+            };
+            try sendAndPrint(socket_path, "command_palette.execute", params, stdout, stderr);
+        } else {
+            try stderr.writeAll("Unknown palette subcommand. Use: list, execute\n");
         }
     } else {
         try stderr.writeAll("Unknown command: ");

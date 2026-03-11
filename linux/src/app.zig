@@ -152,6 +152,30 @@ fn actionCallback(
             return true;
         },
 
+        c.GHOSTTY_ACTION_START_SEARCH => {
+            _ = c.g_idle_add(&doStartSearch, null);
+            return true;
+        },
+
+        c.GHOSTTY_ACTION_END_SEARCH => {
+            _ = c.g_idle_add(&doEndSearch, null);
+            return true;
+        },
+
+        c.GHOSTTY_ACTION_SEARCH_TOTAL => {
+            const ctx = std.heap.c_allocator.create(SearchTotalCtx) catch return false;
+            ctx.* = .{ .total = action.action.search_total.total };
+            _ = c.g_idle_add(&doSearchTotal, @ptrCast(ctx));
+            return true;
+        },
+
+        c.GHOSTTY_ACTION_SEARCH_SELECTED => {
+            const ctx = std.heap.c_allocator.create(SearchSelectedCtx) catch return false;
+            ctx.* = .{ .selected = action.action.search_selected.selected };
+            _ = c.g_idle_add(&doSearchSelected, @ptrCast(ctx));
+            return true;
+        },
+
         else => return false,
     }
 }
@@ -247,5 +271,45 @@ fn doCloseSurface(_: c.gpointer) callconv(.c) c.gboolean {
         log.warn("Failed to close surface: {}", .{err});
     };
 
+    return c.G_SOURCE_REMOVE;
+}
+
+// --- Search callbacks ---
+
+fn doStartSearch(_: c.gpointer) callconv(.c) c.gboolean {
+    const main_mod = @import("main.zig");
+    const window = main_mod.global_window orelse return c.G_SOURCE_REMOVE;
+    window.showSearch();
+    return c.G_SOURCE_REMOVE;
+}
+
+fn doEndSearch(_: c.gpointer) callconv(.c) c.gboolean {
+    const main_mod = @import("main.zig");
+    const window = main_mod.global_window orelse return c.G_SOURCE_REMOVE;
+    window.hideSearch();
+    return c.G_SOURCE_REMOVE;
+}
+
+const SearchTotalCtx = struct { total: isize };
+
+fn doSearchTotal(userdata: c.gpointer) callconv(.c) c.gboolean {
+    const ctx: *SearchTotalCtx = @ptrCast(@alignCast(userdata));
+    defer std.heap.c_allocator.destroy(ctx);
+
+    const main_mod = @import("main.zig");
+    const window = main_mod.global_window orelse return c.G_SOURCE_REMOVE;
+    window.search_overlay.updateSearchTotal(@intCast(ctx.total));
+    return c.G_SOURCE_REMOVE;
+}
+
+const SearchSelectedCtx = struct { selected: isize };
+
+fn doSearchSelected(userdata: c.gpointer) callconv(.c) c.gboolean {
+    const ctx: *SearchSelectedCtx = @ptrCast(@alignCast(userdata));
+    defer std.heap.c_allocator.destroy(ctx);
+
+    const main_mod = @import("main.zig");
+    const window = main_mod.global_window orelse return c.G_SOURCE_REMOVE;
+    window.search_overlay.updateSearchSelected(@intCast(ctx.selected));
     return c.G_SOURCE_REMOVE;
 }

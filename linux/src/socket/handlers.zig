@@ -6,6 +6,7 @@ const Window = @import("../window.zig");
 const Workspace = @import("../workspace.zig");
 const PaneTree = @import("../pane_tree.zig");
 const TerminalWidget = @import("../terminal_widget.zig");
+const CommandPalette = @import("../command_palette.zig");
 const c = @import("../c.zig");
 
 const Allocator = std.mem.Allocator;
@@ -89,6 +90,12 @@ pub fn dispatch(alloc: Allocator, server: *Server, req: *const protocol.Request)
     if (std.mem.eql(u8, req.method, "workspace.set_progress")) {
         return handleWorkspaceSetProgress(alloc, server, req);
     }
+    if (std.mem.eql(u8, req.method, "workspace.set_pinned")) {
+        return handleWorkspaceSetPinned(alloc, server, req);
+    }
+    if (std.mem.eql(u8, req.method, "workspace.set_color")) {
+        return handleWorkspaceSetColor(alloc, server, req);
+    }
 
     // Workspace navigation
     if (std.mem.eql(u8, req.method, "workspace.next")) {
@@ -111,6 +118,12 @@ pub fn dispatch(alloc: Allocator, server: *Server, req: *const protocol.Request)
     if (std.mem.eql(u8, req.method, "pane.swap")) {
         return handlePaneSwap(alloc, server, req);
     }
+    if (std.mem.eql(u8, req.method, "pane.break")) {
+        return handlePaneBreak(alloc, server, req);
+    }
+    if (std.mem.eql(u8, req.method, "pane.join")) {
+        return handlePaneJoin(alloc, server, req);
+    }
 
     // Window methods
     if (std.mem.eql(u8, req.method, "window.list")) {
@@ -129,6 +142,19 @@ pub fn dispatch(alloc: Allocator, server: *Server, req: *const protocol.Request)
     }
     if (std.mem.eql(u8, req.method, "notification.clear")) {
         return handleNotificationClear(alloc, server, req);
+    }
+
+    // Surface search
+    if (std.mem.eql(u8, req.method, "surface.search")) {
+        return handleSurfaceSearch(alloc, server, req);
+    }
+
+    // Command palette methods
+    if (std.mem.eql(u8, req.method, "command_palette.list")) {
+        return handleCommandPaletteList(alloc, req);
+    }
+    if (std.mem.eql(u8, req.method, "command_palette.execute")) {
+        return handleCommandPaletteExecute(alloc, server, req);
     }
 
     return protocol.errorResponse(alloc, req.id, "method_not_found", req.method);
@@ -227,11 +253,12 @@ fn handleSystemCapabilities(alloc: Allocator, req: *const protocol.Request) ![]c
         \\{"methods":["system.ping","system.identify","system.capabilities","system.tree",
         \\"workspace.list","workspace.create","workspace.current","workspace.select","workspace.close","workspace.rename",
         \\"workspace.next","workspace.previous","workspace.last",
-        \\"workspace.report_git","workspace.set_status","workspace.clear_status","workspace.add_log","workspace.clear_log","workspace.set_progress",
-        \\"surface.list","surface.send_text","surface.current","surface.read_text","surface.send_key","surface.split","surface.close",
-        \\"pane.list","pane.resize","pane.swap",
+        \\"workspace.report_git","workspace.set_status","workspace.clear_status","workspace.add_log","workspace.clear_log","workspace.set_progress","workspace.set_pinned","workspace.set_color",
+        \\"surface.list","surface.send_text","surface.current","surface.read_text","surface.send_key","surface.split","surface.close","surface.search",
+        \\"pane.list","pane.resize","pane.swap","pane.break","pane.join",
         \\"window.list","window.current",
-        \\"notification.create","notification.list","notification.clear"]}
+        \\"notification.create","notification.list","notification.clear",
+        \\"command_palette.list","command_palette.execute"]}
     ;
     return protocol.successResponse(alloc, req.id, methods);
 }
@@ -341,8 +368,19 @@ fn workspaceToJson(alloc: Allocator, ws: *const Workspace, is_selected: bool, in
     var progress_buf: [16]u8 = undefined;
     const progress_str = std.fmt.bufPrint(&progress_buf, "{d:.2}", .{ws.progress}) catch "0.00";
 
+    // Build color JSON
+    var color_json: []const u8 = "null";
+    var color_alloc = false;
+    if (ws.getColor()) |color_name| {
+        const escaped = try jsonEscapeString(alloc, color_name);
+        defer alloc.free(escaped);
+        color_json = try std.fmt.allocPrint(alloc, "\"{s}\"", .{escaped});
+        color_alloc = true;
+    }
+    defer if (color_alloc) alloc.free(color_json);
+
     return std.fmt.allocPrint(alloc,
-        \\{{"id":{d},"ref":"workspace:{d}","title":"{s}","index":{d},"selected":{s},"pinned":{s},"pane_count":{d},"git_branch":{s},"git_dirty":{s},"status_entries":{s},"log_entries":{s},"progress":{s},"progress_label":{s}}}
+        \\{{"id":{d},"ref":"workspace:{d}","title":"{s}","index":{d},"selected":{s},"pinned":{s},"color":{s},"pane_count":{d},"git_branch":{s},"git_dirty":{s},"status_entries":{s},"log_entries":{s},"progress":{s},"progress_label":{s}}}
     , .{
         ws.id,
         ws.id,
@@ -350,6 +388,7 @@ fn workspaceToJson(alloc: Allocator, ws: *const Workspace, is_selected: bool, in
         index,
         if (is_selected) "true" else "false",
         if (ws.pinned) "true" else "false",
+        color_json,
         ws.paneCount(),
         branch_json,
         if (ws.git_dirty) "true" else "false",
@@ -806,6 +845,65 @@ fn handleWorkspaceSetProgress(alloc: Allocator, server: *Server, req: *const pro
     ws.setProgress(@floatCast(fraction), label);
     scheduleSidebarUpdate(server, ws);
     return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+fn handleWorkspaceSetPinned(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const ws = resolveWorkspace(server, alloc, req) orelse {
+        return protocol.errorResponse(alloc, req.id, "not_found", "Workspace not found");
+    };
+
+    const pinned = req.getBoolParam(alloc, "pinned") orelse {
+        return protocol.errorResponse(alloc, req.id, "missing_param", "Requires 'pinned' parameter");
+    };
+
+    ws.pinned = pinned;
+
+    // Pinning changes sort order, so rebuild entire sidebar (not just update one row)
+    scheduleSidebarRebuild(server);
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+fn handleWorkspaceSetColor(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const ws = resolveWorkspace(server, alloc, req) orelse {
+        return protocol.errorResponse(alloc, req.id, "not_found", "Workspace not found");
+    };
+
+    const color = req.getStringParam(alloc, "color");
+    if (color) |name| {
+        if (name.len == 0) {
+            // Empty string clears color
+            ws.clearColor();
+        } else if (!Workspace.isValidColor(name)) {
+            return protocol.errorResponse(alloc, req.id, "invalid_color", "Color must be one of: red, blue, green, yellow, purple, orange, pink, cyan");
+        } else {
+            ws.setColor(name);
+        }
+    } else {
+        // null or missing clears the color
+        ws.clearColor();
+    }
+
+    scheduleSidebarUpdate(server, ws);
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+/// Schedule a full sidebar rebuild on the GTK main thread.
+fn scheduleSidebarRebuild(server: *Server) void {
+    const window = server.window orelse return;
+    const ctx = std.heap.c_allocator.create(SidebarRebuildCtx) catch return;
+    ctx.* = .{ .window = window };
+    _ = c.g_idle_add(&doSidebarRebuild, @ptrCast(ctx));
+}
+
+const SidebarRebuildCtx = struct {
+    window: *Window,
+};
+
+fn doSidebarRebuild(userdata: c.gpointer) callconv(.c) c.gboolean {
+    const ctx: *SidebarRebuildCtx = @ptrCast(@alignCast(userdata));
+    defer std.heap.c_allocator.destroy(ctx);
+    ctx.window.sidebar.rebuild();
+    return c.G_SOURCE_REMOVE;
 }
 
 // ------------------------------------------------------------------
@@ -1348,6 +1446,63 @@ fn doCloseSurface(userdata: c.gpointer) callconv(.c) c.gboolean {
 }
 
 // ------------------------------------------------------------------
+// surface.search
+// ------------------------------------------------------------------
+
+fn handleSurfaceSearch(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const window = server.window orelse {
+        return protocol.errorResponse(alloc, req.id, "no_window", "No window available");
+    };
+
+    const text = req.getStringParam(alloc, "text") orelse {
+        return protocol.errorResponse(alloc, req.id, "missing_param", "Requires 'text' parameter");
+    };
+    defer alloc.free(text);
+
+    // Schedule search on GTK main thread
+    const text_copy = alloc.dupe(u8, text) catch {
+        return protocol.errorResponse(alloc, req.id, "internal_error", "Failed to allocate");
+    };
+    const ctx = alloc.create(SearchCtx) catch {
+        alloc.free(text_copy);
+        return protocol.errorResponse(alloc, req.id, "internal_error", "Failed to allocate");
+    };
+    ctx.* = .{ .window = window, .text = text_copy, .alloc = alloc };
+    _ = c.g_idle_add(&doSearch, @ptrCast(ctx));
+
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+const SearchCtx = struct {
+    window: *Window,
+    text: []const u8,
+    alloc: Allocator,
+};
+
+fn doSearch(userdata: c.gpointer) callconv(.c) c.gboolean {
+    const ctx: *SearchCtx = @ptrCast(@alignCast(userdata));
+    defer {
+        ctx.alloc.free(ctx.text);
+        ctx.alloc.destroy(ctx);
+    }
+
+    // Get the focused terminal surface
+    const ws = ctx.window.tab_manager.selectedWorkspace() orelse return c.G_SOURCE_REMOVE;
+    const focused = ws.pane_tree.focused_pane orelse return c.G_SOURCE_REMOVE;
+    const tw = ctx.window.pane_widgets.get(focused) orelse return c.G_SOURCE_REMOVE;
+
+    // Show the search overlay with this surface
+    ctx.window.search_overlay.show(tw.surface);
+
+    // Send the search text to Ghostty
+    var cmd_buf: [1024]u8 = undefined;
+    const cmd = std.fmt.bufPrint(&cmd_buf, "search:forward:{s}", .{ctx.text}) catch return c.G_SOURCE_REMOVE;
+    _ = c.ghostty_surface_binding_action(tw.surface, cmd.ptr, cmd.len);
+
+    return c.G_SOURCE_REMOVE;
+}
+
+// ------------------------------------------------------------------
 // workspace.next / workspace.previous / workspace.last
 // ------------------------------------------------------------------
 
@@ -1583,6 +1738,86 @@ fn doPaneSwap(userdata: c.gpointer) callconv(.c) c.gboolean {
 }
 
 // ------------------------------------------------------------------
+// Pane break/join handlers
+// ------------------------------------------------------------------
+
+fn handlePaneBreak(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const window = server.window orelse {
+        return protocol.errorResponse(alloc, req.id, "no_window", "No window available");
+    };
+
+    const pane_id_raw = req.getIntParam(alloc, "pane_id") orelse {
+        return protocol.errorResponse(alloc, req.id, "missing_param", "Requires 'pane_id' parameter");
+    };
+
+    const ctx = std.heap.c_allocator.create(PaneBreakCtx) catch {
+        return protocol.errorResponse(alloc, req.id, "internal_error", "Failed to allocate");
+    };
+    ctx.* = .{ .window = window, .pane_id = @intCast(pane_id_raw) };
+    _ = c.g_idle_add(&doPaneBreak, @ptrCast(ctx));
+
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+const PaneBreakCtx = struct {
+    window: *Window,
+    pane_id: PaneTree.NodeId,
+};
+
+fn doPaneBreak(userdata: c.gpointer) callconv(.c) c.gboolean {
+    const ctx: *PaneBreakCtx = @ptrCast(@alignCast(userdata));
+    defer std.heap.c_allocator.destroy(ctx);
+
+    ctx.window.breakPaneToNewWorkspace(ctx.pane_id) catch |err| {
+        log.warn("Failed to break pane: {}", .{err});
+    };
+
+    return c.G_SOURCE_REMOVE;
+}
+
+fn handlePaneJoin(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const window = server.window orelse {
+        return protocol.errorResponse(alloc, req.id, "no_window", "No window available");
+    };
+
+    const pane_id_raw = req.getIntParam(alloc, "pane_id") orelse {
+        return protocol.errorResponse(alloc, req.id, "missing_param", "Requires 'pane_id' parameter");
+    };
+    const ws_id_raw = req.getIntParam(alloc, "workspace_id") orelse {
+        return protocol.errorResponse(alloc, req.id, "missing_param", "Requires 'workspace_id' parameter");
+    };
+
+    const ctx = std.heap.c_allocator.create(PaneJoinCtx) catch {
+        return protocol.errorResponse(alloc, req.id, "internal_error", "Failed to allocate");
+    };
+    ctx.* = .{
+        .window = window,
+        .pane_id = @intCast(pane_id_raw),
+        .workspace_id = @intCast(ws_id_raw),
+    };
+    _ = c.g_idle_add(&doPaneJoin, @ptrCast(ctx));
+
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+const PaneJoinCtx = struct {
+    window: *Window,
+    pane_id: PaneTree.NodeId,
+    workspace_id: Workspace.WorkspaceId,
+};
+
+fn doPaneJoin(userdata: c.gpointer) callconv(.c) c.gboolean {
+    const ctx: *PaneJoinCtx = @ptrCast(@alignCast(userdata));
+    defer std.heap.c_allocator.destroy(ctx);
+
+    ctx.window.joinPaneToWorkspace(ctx.pane_id, ctx.workspace_id) catch |err| {
+        log.warn("Failed to join pane: {}", .{err});
+    };
+
+    return c.G_SOURCE_REMOVE;
+}
+
+// ------------------------------------------------------------------
 // Pane handlers
 // ------------------------------------------------------------------
 
@@ -1737,4 +1972,72 @@ fn handleNotificationClear(alloc: Allocator, server: *Server, req: *const protoc
         server.notification_store.clear(null);
     }
     return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+// ------------------------------------------------------------------
+// Command palette handlers
+// ------------------------------------------------------------------
+
+fn handleCommandPaletteList(alloc: Allocator, req: *const protocol.Request) ![]const u8 {
+    var array = JsonArrayBuilder.init(alloc);
+    defer array.deinit();
+    try array.startArray();
+
+    const palette_actions = CommandPalette.getActions();
+    for (palette_actions) |action| {
+        const name_escaped = try jsonEscapeString(alloc, action.name);
+        defer alloc.free(name_escaped);
+        const desc_escaped = try jsonEscapeString(alloc, action.description);
+        defer alloc.free(desc_escaped);
+
+        const json = try std.fmt.allocPrint(alloc,
+            \\{{"name":"{s}","description":"{s}"}}
+        , .{ name_escaped, desc_escaped });
+        try array.addRaw(json);
+    }
+
+    try array.endArray();
+    const result = try array.toOwnedSlice();
+    defer alloc.free(result);
+
+    const wrapper = try std.fmt.allocPrint(alloc, "{{\"actions\":{s}}}", .{result});
+    defer alloc.free(wrapper);
+    return protocol.successResponse(alloc, req.id, wrapper);
+}
+
+fn handleCommandPaletteExecute(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
+    const window = server.window orelse {
+        return protocol.errorResponse(alloc, req.id, "no_window", "No window available");
+    };
+
+    const action_name = req.getStringParam(alloc, "action") orelse {
+        return protocol.errorResponse(alloc, req.id, "missing_param", "Requires 'action' parameter");
+    };
+    defer alloc.free(action_name);
+
+    // Schedule execution on GTK main thread
+    const ctx = try alloc.create(PaletteExecCtx);
+    // Copy the action name for async use
+    const name_copy = try alloc.dupe(u8, action_name);
+    ctx.* = .{ .window = window, .action_name = name_copy, .alloc = alloc };
+    _ = c.g_idle_add(&doPaletteExecute, @ptrCast(ctx));
+
+    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+}
+
+const PaletteExecCtx = struct {
+    window: *Window,
+    action_name: []const u8,
+    alloc: Allocator,
+};
+
+fn doPaletteExecute(userdata: c.gpointer) callconv(.c) c.gboolean {
+    const ctx: *PaletteExecCtx = @ptrCast(@alignCast(userdata));
+    defer {
+        ctx.alloc.free(ctx.action_name);
+        ctx.alloc.destroy(ctx);
+    }
+
+    _ = ctx.window.command_palette.executeByName(ctx.action_name);
+    return c.G_SOURCE_REMOVE;
 }

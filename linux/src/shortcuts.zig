@@ -113,5 +113,17 @@ fn onKeyPressed(
         return 1;
     }
 
+    // Ctrl+Shift+P: Command palette
+    if (keyval == c.GDK_KEY_P or keyval == c.GDK_KEY_p) {
+        window.toggleCommandPalette();
+        return 1;
+    }
+
+    // Ctrl+Shift+F: Terminal search
+    if (keyval == c.GDK_KEY_F or keyval == c.GDK_KEY_f) {
+        window.showSearch();
+        return 1;
+    }
+
     return 0; // Not handled
 }

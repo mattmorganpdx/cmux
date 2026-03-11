@@ -14,6 +14,9 @@ inline fn asWidget(ptr: anytype) *c.GtkWidget {
     return @ptrCast(@alignCast(ptr));
 }
 
+/// Key for storing the real workspace index on each GtkListBoxRow.
+const ws_index_key = "ws-idx";
+
 /// Callback type for when the user selects a workspace in the sidebar.
 pub const SelectCallback = *const fn (index: usize, userdata: ?*anyopaque) void;
 
@@ -117,7 +120,8 @@ pub fn setSelectCallback(self: *Sidebar, cb: SelectCallback, userdata: ?*anyopaq
 }
 
 /// Rebuild the sidebar list from the tab manager's workspace list.
-/// Call this after workspace create/close/reorder operations.
+/// Call this after workspace create/close/reorder/pin operations.
+/// Pinned workspaces are sorted to the top.
 pub fn rebuild(self: *Sidebar) void {
     // Remove all existing rows
     while (true) {
@@ -126,10 +130,16 @@ pub fn rebuild(self: *Sidebar) void {
         c.gtk_list_box_remove(self.list_box, asWidget(row));
     }
 
-    // Add a row for each workspace
-    for (self.tab_manager.workspaces.items) |ws| {
-        const row_widget = createWorkspaceRow(ws);
-        c.gtk_list_box_append(self.list_box, row_widget);
+    // Two-pass: pinned workspaces first, then non-pinned
+    for (self.tab_manager.workspaces.items, 0..) |ws, i| {
+        if (ws.pinned) {
+            appendWorkspaceRow(self.list_box, ws, i);
+        }
+    }
+    for (self.tab_manager.workspaces.items, 0..) |ws, i| {
+        if (!ws.pinned) {
+            appendWorkspaceRow(self.list_box, ws, i);
+        }
     }
 
     // Select the current workspace's row
@@ -141,20 +151,23 @@ pub fn syncSelection(self: *Sidebar) void {
     self.updating = true;
     defer self.updating = false;
 
-    if (self.tab_manager.selected_index) |idx| {
-        const row = c.gtk_list_box_get_row_at_index(self.list_box, @intCast(idx));
+    if (self.tab_manager.selected_index) |target_idx| {
+        // Find the visual row that holds this workspace index
+        const row = self.findRowByWorkspaceIndex(target_idx);
         c.gtk_list_box_select_row(self.list_box, row);
     } else {
         c.gtk_list_box_select_row(self.list_box, null);
     }
 }
 
-/// Update a single workspace row's content (e.g., after rename or git branch change).
+/// Update a single workspace row's content (e.g., after rename or metadata change).
 pub fn updateRow(self: *Sidebar, index: usize) void {
     if (index >= self.tab_manager.workspaces.items.len) return;
 
     const ws = self.tab_manager.workspaces.items[index];
-    const row = c.gtk_list_box_get_row_at_index(self.list_box, @intCast(index));
+
+    // Find the visual row that corresponds to this workspace index
+    const row = self.findRowByWorkspaceIndex(index);
     if (row == null) return;
 
     // Replace the row's child with updated content
@@ -165,20 +178,51 @@ pub fn updateRow(self: *Sidebar, index: usize) void {
     c.gtk_widget_queue_resize(asWidget(row));
 }
 
+/// Find a GtkListBoxRow by its stored workspace index.
+fn findRowByWorkspaceIndex(self: *Sidebar, target: usize) ?*c.GtkListBoxRow {
+    var visual_idx: c.gint = 0;
+    while (true) {
+        const row = c.gtk_list_box_get_row_at_index(self.list_box, visual_idx);
+        if (row == null) return null;
+        const stored = getRowWorkspaceIndex(row);
+        if (stored == target) return row;
+        visual_idx += 1;
+    }
+}
+
 // ------------------------------------------------------------------
 // Row creation
 // ------------------------------------------------------------------
 
-fn createWorkspaceRow(ws: *const Workspace) *c.GtkWidget {
+/// Create a workspace row and append it to the list box, storing the real index.
+fn appendWorkspaceRow(list_box: *c.GtkListBox, ws: *const Workspace, data_index: usize) void {
     const row: *c.GtkListBoxRow = @ptrCast(@alignCast(c.gtk_list_box_row_new()));
     const content = createRowContentBox(ws);
     c.gtk_list_box_row_set_child(row, asWidget(content));
-    return asWidget(row);
+
+    // Store the real workspace index on the row
+    c.g_object_set_data(
+        @as([*c]c.GObject, @ptrCast(row)),
+        ws_index_key,
+        @ptrFromInt(data_index),
+    );
+
+    c.gtk_list_box_append(list_box, asWidget(row));
+}
+
+/// Read the workspace index stored on a row.
+fn getRowWorkspaceIndex(row: ?*c.GtkListBoxRow) usize {
+    if (row == null) return 0;
+    const ptr = c.g_object_get_data(
+        @as([*c]c.GObject, @ptrCast(row.?)),
+        ws_index_key,
+    );
+    return @intFromPtr(ptr);
 }
 
 fn createRowContentBox(ws: *const Workspace) *c.GtkBox {
     // Each row is a vertical box with:
-    // - Title label
+    // - Title label (with pin indicator if pinned)
     // - Subtitle label (git branch + dirty, or pane count)
     // - Status entries (if any)
     // - Progress bar (if active)
@@ -189,12 +233,22 @@ fn createRowContentBox(ws: *const Workspace) *c.GtkBox {
     c.gtk_widget_set_margin_top(asWidget(vbox), 6);
     c.gtk_widget_set_margin_bottom(asWidget(vbox), 6);
 
-    // Title - must be null terminated
+    // Title - with pin indicator if pinned
     const title = ws.getTitle();
-    var title_z: [257]u8 = undefined;
-    const title_len = @min(title.len, 256);
-    @memcpy(title_z[0..title_len], title[0..title_len]);
-    title_z[title_len] = 0;
+    var title_z: [261]u8 = undefined;
+    var title_pos: usize = 0;
+
+    if (ws.pinned) {
+        // Prefix with pin emoji
+        const pin = "\xf0\x9f\x93\x8c "; // 📌 in UTF-8
+        @memcpy(title_z[0..pin.len], pin);
+        title_pos = pin.len;
+    }
+
+    const title_len = @min(title.len, title_z.len - title_pos - 1);
+    @memcpy(title_z[title_pos..][0..title_len], title[0..title_len]);
+    title_pos += title_len;
+    title_z[title_pos] = 0;
 
     const title_label: *c.GtkLabel = @ptrCast(@alignCast(c.gtk_label_new(&title_z)));
     c.gtk_label_set_xalign(title_label, 0.0);
@@ -276,6 +330,31 @@ fn createRowContentBox(ws: *const Workspace) *c.GtkBox {
         appendDimLabel(vbox, log_slice);
     }
 
+    // Wrap in hbox with color accent bar if workspace has a color
+    if (ws.getColor()) |color_name| {
+        const hbox: *c.GtkBox = @ptrCast(c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0));
+
+        // Create a narrow accent bar (4px wide, full height)
+        const accent: *c.GtkBox = @ptrCast(c.gtk_box_new(c.GTK_ORIENTATION_VERTICAL, 0));
+        c.gtk_widget_set_size_request(asWidget(accent), 4, -1);
+
+        // Apply the CSS class "ws-accent-<color>"
+        var css_class_buf: [48]u8 = undefined;
+        const css_class = std.fmt.bufPrint(&css_class_buf, "ws-accent-{s}", .{color_name}) catch "ws-accent-red";
+        // Null-terminate for C
+        var css_z: [49]u8 = undefined;
+        const css_len = @min(css_class.len, css_z.len - 1);
+        @memcpy(css_z[0..css_len], css_class[0..css_len]);
+        css_z[css_len] = 0;
+        c.gtk_widget_add_css_class(asWidget(accent), &css_z);
+
+        c.gtk_box_append(hbox, asWidget(accent));
+        c.gtk_widget_set_hexpand(asWidget(vbox), 1);
+        c.gtk_box_append(hbox, asWidget(vbox));
+
+        return hbox;
+    }
+
     return vbox;
 }
 
@@ -308,7 +387,8 @@ fn onRowSelected(
     if (self.updating) return;
 
     if (row) |r| {
-        const index: usize = @intCast(c.gtk_list_box_row_get_index(r));
+        // Read the real workspace index stored on this row
+        const index = getRowWorkspaceIndex(r);
         if (self.on_select) |cb| {
             cb(index, self.on_select_userdata);
         }
