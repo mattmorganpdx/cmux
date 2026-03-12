@@ -65,9 +65,13 @@ pub fn create(gtk_app: *c.GtkApplication, app: *App) !*Window {
     c.gtk_window_set_default_size(@ptrCast(gtk_window), 1100, 700);
 
     // Create the main layout: horizontal paned with sidebar on left + content on right
-    const main_hbox: *c.GtkBox = @ptrCast(c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0));
-    c.gtk_widget_set_hexpand(@as(*c.GtkWidget, @ptrCast(main_hbox)), 1);
-    c.gtk_widget_set_vexpand(@as(*c.GtkWidget, @ptrCast(main_hbox)), 1);
+    const main_paned: *c.GtkPaned = @ptrCast(c.gtk_paned_new(c.GTK_ORIENTATION_HORIZONTAL));
+    c.gtk_widget_set_hexpand(@as(*c.GtkWidget, @ptrCast(@alignCast(main_paned))), 1);
+    c.gtk_widget_set_vexpand(@as(*c.GtkWidget, @ptrCast(@alignCast(main_paned))), 1);
+    c.gtk_paned_set_resize_start_child(main_paned, 0); // sidebar stays fixed on window resize
+    c.gtk_paned_set_resize_end_child(main_paned, 1); // terminal gets extra space
+    c.gtk_paned_set_shrink_start_child(main_paned, 0);
+    c.gtk_paned_set_shrink_end_child(main_paned, 0);
 
     // The content area where the current workspace's split tree lives
     const content_box: *c.GtkBox = @ptrCast(c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0));
@@ -93,17 +97,14 @@ pub fn create(gtk_app: *c.GtkApplication, app: *App) !*Window {
     sidebar.setSelectCallback(onSidebarSelect, @ptrCast(self));
     self.sidebar = sidebar;
 
-    // Add sidebar separator
-    const sidebar_sep: *c.GtkSeparator = @ptrCast(@alignCast(c.gtk_separator_new(c.GTK_ORIENTATION_VERTICAL)));
-
-    // Layout: sidebar | separator | content
-    c.gtk_box_append(main_hbox, sidebar.widget());
-    c.gtk_box_append(main_hbox, @ptrCast(@alignCast(sidebar_sep)));
-    c.gtk_box_append(main_hbox, @as(*c.GtkWidget, @ptrCast(content_box)));
+    // Layout: sidebar | content (paned provides draggable divider)
+    c.gtk_paned_set_start_child(main_paned, sidebar.widget());
+    c.gtk_paned_set_end_child(main_paned, @as(*c.GtkWidget, @ptrCast(content_box)));
+    c.gtk_paned_set_position(main_paned, 200);
 
     // Wrap in overlay for command palette + search overlay
     const overlay: *c.GtkOverlay = @ptrCast(@alignCast(c.gtk_overlay_new()));
-    c.gtk_overlay_set_child(overlay, @as(*c.GtkWidget, @ptrCast(main_hbox)));
+    c.gtk_overlay_set_child(overlay, @as(*c.GtkWidget, @ptrCast(@alignCast(main_paned))));
 
     // Create command palette and add as overlay
     const palette = try CommandPalette.create(alloc, self);
@@ -152,9 +153,13 @@ pub fn createFromSession(gtk_app: *c.GtkApplication, app: *App, snap: *const ses
     c.gtk_window_set_title(@ptrCast(gtk_window), "cmux");
     c.gtk_window_set_default_size(@ptrCast(gtk_window), 1100, 700);
 
-    const main_hbox: *c.GtkBox = @ptrCast(c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0));
-    c.gtk_widget_set_hexpand(@as(*c.GtkWidget, @ptrCast(main_hbox)), 1);
-    c.gtk_widget_set_vexpand(@as(*c.GtkWidget, @ptrCast(main_hbox)), 1);
+    const main_paned: *c.GtkPaned = @ptrCast(c.gtk_paned_new(c.GTK_ORIENTATION_HORIZONTAL));
+    c.gtk_widget_set_hexpand(@as(*c.GtkWidget, @ptrCast(@alignCast(main_paned))), 1);
+    c.gtk_widget_set_vexpand(@as(*c.GtkWidget, @ptrCast(@alignCast(main_paned))), 1);
+    c.gtk_paned_set_resize_start_child(main_paned, 0);
+    c.gtk_paned_set_resize_end_child(main_paned, 1);
+    c.gtk_paned_set_shrink_start_child(main_paned, 0);
+    c.gtk_paned_set_shrink_end_child(main_paned, 0);
 
     const content_box: *c.GtkBox = @ptrCast(c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0));
     c.gtk_widget_set_hexpand(@as(*c.GtkWidget, @ptrCast(content_box)), 1);
@@ -178,15 +183,13 @@ pub fn createFromSession(gtk_app: *c.GtkApplication, app: *App, snap: *const ses
     sidebar.setSelectCallback(onSidebarSelect, @ptrCast(self));
     self.sidebar = sidebar;
 
-    const sidebar_sep: *c.GtkSeparator = @ptrCast(@alignCast(c.gtk_separator_new(c.GTK_ORIENTATION_VERTICAL)));
-
-    c.gtk_box_append(main_hbox, sidebar.widget());
-    c.gtk_box_append(main_hbox, @ptrCast(@alignCast(sidebar_sep)));
-    c.gtk_box_append(main_hbox, @as(*c.GtkWidget, @ptrCast(content_box)));
+    c.gtk_paned_set_start_child(main_paned, sidebar.widget());
+    c.gtk_paned_set_end_child(main_paned, @as(*c.GtkWidget, @ptrCast(content_box)));
+    c.gtk_paned_set_position(main_paned, 200);
 
     // Wrap in overlay for command palette + search overlay
     const overlay: *c.GtkOverlay = @ptrCast(@alignCast(c.gtk_overlay_new()));
-    c.gtk_overlay_set_child(overlay, @as(*c.GtkWidget, @ptrCast(main_hbox)));
+    c.gtk_overlay_set_child(overlay, @as(*c.GtkWidget, @ptrCast(@alignCast(main_paned))));
 
     const palette = try CommandPalette.create(alloc, self);
     self.command_palette = palette;

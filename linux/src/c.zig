@@ -202,6 +202,7 @@ pub const g_object_set_data = raw.g_object_set_data;
 pub const g_object_get_data = raw.g_object_get_data;
 pub const g_signal_connect_data = raw.g_signal_connect_data;
 pub const g_idle_add = raw.g_idle_add;
+pub const g_timeout_add = raw.g_timeout_add;
 pub const g_timeout_add_seconds = raw.g_timeout_add_seconds;
 pub const g_error_free = raw.g_error_free;
 pub const g_free = raw.g_free;
@@ -257,6 +258,7 @@ pub const ghostty_surface_new = raw.ghostty_surface_new;
 pub const ghostty_surface_free = raw.ghostty_surface_free;
 pub const ghostty_surface_draw = raw.ghostty_surface_draw;
 pub const ghostty_surface_set_size = raw.ghostty_surface_set_size;
+pub const ghostty_surface_set_content_scale = raw.ghostty_surface_set_content_scale;
 pub const ghostty_surface_key = raw.ghostty_surface_key;
 pub const ghostty_surface_mouse_button = raw.ghostty_surface_mouse_button;
 pub const ghostty_surface_mouse_pos = raw.ghostty_surface_mouse_pos;
@@ -326,6 +328,10 @@ pub const GHOSTTY_POINT_SURFACE = raw.GHOSTTY_POINT_SURFACE;
 pub const GHOSTTY_POINT_COORD_EXACT = raw.GHOSTTY_POINT_COORD_EXACT;
 pub const GHOSTTY_POINT_COORD_TOP_LEFT = raw.GHOSTTY_POINT_COORD_TOP_LEFT;
 pub const GHOSTTY_POINT_COORD_BOTTOM_RIGHT = raw.GHOSTTY_POINT_COORD_BOTTOM_RIGHT;
+
+// GDK frame clock and tick callbacks
+pub const GdkFrameClock = raw.GdkFrameClock;
+pub const gtk_widget_add_tick_callback = raw.gtk_widget_add_tick_callback;
 
 // GDK key utilities
 pub const gdk_keyval_to_unicode = raw.gdk_keyval_to_unicode;
