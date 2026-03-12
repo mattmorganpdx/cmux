@@ -119,8 +119,17 @@ fn actionCallback(
             const title_ptr = action.action.set_title.title;
             if (title_ptr == null) return false;
 
-            const ctx = std.heap.c_allocator.create(SetTitleCtx) catch return false;
-            ctx.* = .{ .title = title_ptr };
+            // Copy the title — Ghostty may free the original before the
+            // idle callback runs on the next main loop iteration.
+            const title_span = std.mem.span(title_ptr);
+            const title_copy = std.heap.c_allocator.allocSentinel(u8, title_span.len, 0) catch return false;
+            @memcpy(title_copy, title_span);
+
+            const ctx = std.heap.c_allocator.create(SetTitleCtx) catch {
+                std.heap.c_allocator.free(title_copy);
+                return false;
+            };
+            ctx.* = .{ .title = title_copy };
             _ = c.g_idle_add(&doSetTitle, @ptrCast(ctx));
             return true;
         },
@@ -136,8 +145,15 @@ fn actionCallback(
             const pwd_ptr = action.action.pwd.pwd;
             if (pwd_ptr == null) return false;
 
-            const ctx = std.heap.c_allocator.create(PwdCtx) catch return false;
-            ctx.* = .{ .pwd = pwd_ptr };
+            const pwd_span = std.mem.span(pwd_ptr);
+            const pwd_copy = std.heap.c_allocator.allocSentinel(u8, pwd_span.len, 0) catch return false;
+            @memcpy(pwd_copy, pwd_span);
+
+            const ctx = std.heap.c_allocator.create(PwdCtx) catch {
+                std.heap.c_allocator.free(pwd_copy);
+                return false;
+            };
+            ctx.* = .{ .pwd = pwd_copy };
             _ = c.g_idle_add(&doPwd, @ptrCast(ctx));
             return true;
         },
@@ -194,20 +210,25 @@ fn closeSurfaceCallback(
 // These run on the GTK main thread via g_idle_add.
 
 const SetTitleCtx = struct {
-    /// Pointer into Ghostty-owned memory — only valid until the idle callback runs,
-    /// which happens on the next main loop iteration (before Ghostty can free it).
-    title: [*c]const u8,
+    /// Owned copy of the title string (Ghostty may free the original
+    /// before the idle callback fires).
+    title: [:0]const u8,
+
+    fn deinit(self: *SetTitleCtx) void {
+        std.heap.c_allocator.free(self.title);
+        std.heap.c_allocator.destroy(self);
+    }
 };
 
 fn doSetTitle(userdata: c.gpointer) callconv(.c) c.gboolean {
     const ctx: *SetTitleCtx = @ptrCast(@alignCast(userdata));
-    defer std.heap.c_allocator.destroy(ctx);
+    defer ctx.deinit();
 
     const main_mod = @import("main.zig");
     const window = main_mod.global_window orelse return c.G_SOURCE_REMOVE;
 
     // Set the GTK window title
-    c.gtk_window_set_title(@ptrCast(window.gtk_window), ctx.title);
+    c.gtk_window_set_title(@ptrCast(window.gtk_window), ctx.title.ptr);
 
     return c.G_SOURCE_REMOVE;
 }
@@ -239,18 +260,23 @@ fn doNewSplit(userdata: c.gpointer) callconv(.c) c.gboolean {
 }
 
 const PwdCtx = struct {
-    pwd: [*c]const u8,
+    pwd: [:0]const u8,
+
+    fn deinit(self: *PwdCtx) void {
+        std.heap.c_allocator.free(self.pwd);
+        std.heap.c_allocator.destroy(self);
+    }
 };
 
 fn doPwd(userdata: c.gpointer) callconv(.c) c.gboolean {
     const ctx: *PwdCtx = @ptrCast(@alignCast(userdata));
-    defer std.heap.c_allocator.destroy(ctx);
+    defer ctx.deinit();
 
     const main_mod = @import("main.zig");
     const window = main_mod.global_window orelse return c.G_SOURCE_REMOVE;
 
     if (window.tab_manager.selectedWorkspace()) |ws| {
-        ws.setCwd(std.mem.span(ctx.pwd));
+        ws.setCwd(ctx.pwd);
     }
 
     return c.G_SOURCE_REMOVE;

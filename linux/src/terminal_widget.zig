@@ -27,6 +27,12 @@ pane_id: ?u64 = null,
 workspace_id: ?u64 = null,
 socket_path: ?[*:0]const u8 = null,
 
+/// Last known widget dimensions for detecting resize changes.
+/// Updated by the tick callback to catch maximize/unmaximize events
+/// that the GtkGLArea "resize" signal can miss.
+last_width: c.gint = 0,
+last_height: c.gint = 0,
+
 /// Global registry mapping ghostty_surface_t → *TerminalWidget.
 /// Used by the action callback to look up widgets without relying on
 /// ghostty_surface_userdata pointer interpretation.
@@ -193,6 +199,15 @@ pub fn create(
         motion_controller,
     );
 
+    // Register a tick callback to detect size changes that the GtkGLArea
+    // "resize" signal can miss (e.g., window maximize/unmaximize).
+    _ = c.gtk_widget_add_tick_callback(
+        @as(*c.GtkWidget, @ptrCast(gl_area)),
+        &onTick,
+        @ptrCast(self),
+        null,
+    );
+
     self.working_directory = working_directory;
 
     return self;
@@ -313,14 +328,18 @@ fn onUnrealize(_: *c.GtkGLArea, userdata: c.gpointer) callconv(.c) void {
 }
 
 fn onRender(
-    gl_area: *c.GtkGLArea,
+    _: *c.GtkGLArea,
     _: *c.GdkGLContext,
     userdata: c.gpointer,
 ) callconv(.c) c.gboolean {
     const self: *TerminalWidget = @ptrCast(@alignCast(userdata));
-    _ = gl_area;
 
     if (self.surface != null) {
+        // Do NOT call ghostty_surface_set_size here. Calling set_size
+        // re-triggers the async IO→renderer resize pipeline, and the
+        // immediate draw() will see a grid/cells size mismatch and bail
+        // (re-presenting the stale frame). Size updates are handled by
+        // onResize and onTick; this callback should only draw.
         c.ghostty_surface_draw(self.surface);
     }
 
@@ -328,7 +347,7 @@ fn onRender(
 }
 
 fn onResize(
-    _: *c.GtkGLArea,
+    area: *c.GtkGLArea,
     width: c.gint,
     height: c.gint,
     userdata: c.gpointer,
@@ -336,8 +355,51 @@ fn onResize(
     const self: *TerminalWidget = @ptrCast(@alignCast(userdata));
 
     if (self.surface != null) {
+        // Update content scale first (mirroring Ghostty's GTK apprt pattern).
+        const scale: f64 = @floatFromInt(c.gtk_widget_get_scale_factor(@as(*c.GtkWidget, @ptrCast(@alignCast(area)))));
+        c.ghostty_surface_set_content_scale(self.surface, scale, scale);
+
+        // Tell Ghostty the new size. This queues an async resize through the
+        // IO thread → renderer mailbox pipeline.
         c.ghostty_surface_set_size(self.surface, @intCast(width), @intCast(height));
+
+        // Queue a render. The first render may bail (cells not rebuilt yet
+        // for the new grid size), but Ghostty's renderer thread will push
+        // a redraw_surface message once the IO thread + renderer have
+        // processed the resize, triggering a second render that succeeds.
+        c.gtk_gl_area_queue_render(self.gl_area);
     }
+    self.last_width = width;
+    self.last_height = height;
+}
+
+/// Tick callback fires every GTK frame clock cycle. Detects size changes
+/// that the GtkGLArea "resize" signal misses (maximize, unmaximize, etc.)
+/// and triggers a Ghostty surface size update + render.
+fn onTick(
+    gtk_widget: [*c]c.GtkWidget,
+    _: ?*c.GdkFrameClock,
+    userdata: c.gpointer,
+) callconv(.c) c.gboolean {
+    const self: *TerminalWidget = @ptrCast(@alignCast(userdata));
+    if (self.surface == null) return 1; // keep ticking
+
+    // gtk_widget_get_width/height return logical pixels — multiply by
+    // scale factor to get physical pixels for Ghostty.
+    const scale_int = c.gtk_widget_get_scale_factor(gtk_widget);
+    const w = c.gtk_widget_get_width(gtk_widget) * scale_int;
+    const h = c.gtk_widget_get_height(gtk_widget) * scale_int;
+
+    if (w > 0 and h > 0 and (w != self.last_width or h != self.last_height)) {
+        self.last_width = w;
+        self.last_height = h;
+        const scale: f64 = @floatFromInt(scale_int);
+        c.ghostty_surface_set_content_scale(self.surface, scale, scale);
+        c.ghostty_surface_set_size(self.surface, @intCast(w), @intCast(h));
+        c.gtk_gl_area_queue_render(self.gl_area);
+    }
+
+    return 1; // G_SOURCE_CONTINUE — keep the callback active
 }
 
 fn onKeyPressed(
