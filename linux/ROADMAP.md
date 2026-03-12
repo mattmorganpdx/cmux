@@ -71,6 +71,9 @@ So this roadmap is written from the perspective of an AI agent who is both the b
 ### Bug Fixes
 - [x] GTK-CRITICAL `gtk_gl_area_queue_render` assertion flood — fixed with realized flag, surface registry, GObject ref counting, onUnrealize callback
 - [x] `surface.send_text` commands appearing but not executing — switched from `ghostty_surface_text` (bracketed paste) to `ghostty_surface_binding_action("text:...")` (direct PTY write)
+- [x] Terminal resize not working on Linux — Ghostty's resize handling had a Darwin-specific clause; patched in fork and updated libghostty binary
+- [x] `set_title` crash on Linux — fixed alongside resize patch
+- [x] Sidebar workspace click stealing keyboard focus from terminal — made GtkListBox non-focusable and reordered syncSelection before terminal focus in switchWorkspace
 
 ---
 
@@ -215,7 +218,7 @@ These are significant features from macOS that would be valuable but aren't bloc
 
 ## Current State
 
-As of 2026-03-11: The Linux port is ready for dogfooding with Claude Code integration. 42 socket API methods (41 original + `claude.hook`) have matching CLI commands. The `cmux-cli` binary supports `--socket` flag for explicit socket path override. Agent instructions are configured via `linux/CLAUDE.md`.
+As of 2026-03-12: The Linux port is ready for dogfooding with Claude Code integration. 42 socket API methods (41 original + `claude.hook`) have matching CLI commands. The `cmux-cli` binary supports `--socket` flag for explicit socket path override. Agent instructions are configured via `linux/CLAUDE.md`.
 
 An AI agent can: read terminal output, send commands and keystrokes, create/close splits, navigate workspaces, resize/swap panes, discover its own terminal context via environment variables, have its workspace layout survive restarts, feed metadata into the sidebar, receive desktop notifications, use the command palette API, search terminal content, color-code and pin workspaces, reorganize panes across workspaces, and have Claude Code session status automatically reflected in the sidebar — all through the socket API or `cmux-cli`.
 

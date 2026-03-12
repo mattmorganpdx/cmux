@@ -1,5 +1,16 @@
 # cmux Linux port — agent notes
 
+## IMPORTANT: Actively use cmux when running inside it
+
+When `CMUX_SURFACE_ID` is set (meaning you're running inside cmux), you MUST actively use `cmux-cli` — not just the Bash tool. This means:
+
+1. **At session start:** Create a named workspace for your task, report status to the sidebar.
+2. **For builds/tests:** Run them in a split pane so the main pane stays free. Use `surface read-text` to check results.
+3. **For multi-step work:** Report progress via `workspace set-progress` and `workspace add-log`.
+4. **For parallel work:** Use splits rather than running sequential commands.
+
+This is real dogfooding — the whole point of running inside cmux.
+
 ## Using cmux-cli for development
 
 When cmux is running, prefer using `cmux-cli` to interact with terminal sessions rather than the raw Bash tool. This gives you persistent sessions, parallel panes, and the ability to interact with running processes.

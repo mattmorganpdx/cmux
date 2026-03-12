@@ -73,9 +73,12 @@ pub fn create(alloc: Allocator, tab_manager: *TabManager) !*Sidebar {
     c.gtk_scrolled_window_set_policy(scrolled, c.GTK_POLICY_NEVER, c.GTK_POLICY_AUTOMATIC);
     c.gtk_widget_set_vexpand(asWidget(scrolled), 1);
 
-    // Create the list box
+    // Create the list box — not focusable so clicking rows doesn't steal
+    // keyboard focus from the terminal surface.
     const list_box: *c.GtkListBox = @ptrCast(@alignCast(c.gtk_list_box_new()));
     c.gtk_list_box_set_selection_mode(list_box, c.GTK_SELECTION_SINGLE);
+    c.gtk_widget_set_focusable(asWidget(list_box), 0);
+    c.gtk_widget_set_can_focus(asWidget(list_box), 0);
 
     c.gtk_scrolled_window_set_child(scrolled, asWidget(list_box));
     c.gtk_box_append(container, asWidget(scrolled));

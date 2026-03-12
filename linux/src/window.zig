@@ -604,6 +604,10 @@ pub fn switchWorkspace(self: *Window, index: usize) !void {
     if (self.tab_manager.selectedWorkspace()) |ws| {
         try self.buildWorkspaceWidgets(ws);
 
+        // Sync sidebar selection before focusing terminal, so GTK's
+        // listbox selection handling doesn't steal focus back.
+        self.sidebar.syncSelection();
+
         // Focus the workspace's focused pane
         if (ws.pane_tree.focused_pane) |pane_id| {
             if (self.pane_widgets.get(pane_id)) |tw| {
@@ -611,9 +615,6 @@ pub fn switchWorkspace(self: *Window, index: usize) !void {
             }
         }
     }
-
-    // Sync sidebar selection
-    self.sidebar.syncSelection();
 }
 
 /// Toggle sidebar visibility.
