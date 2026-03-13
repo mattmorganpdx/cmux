@@ -55,6 +55,8 @@ pub const gtk_stack_new = raw.gtk_stack_new;
 pub const gtk_stack_add_named = raw.gtk_stack_add_named;
 pub const gtk_stack_remove = raw.gtk_stack_remove;
 pub const gtk_stack_set_visible_child_name = raw.gtk_stack_set_visible_child_name;
+pub const gtk_stack_set_transition_type = raw.gtk_stack_set_transition_type;
+pub const GTK_STACK_TRANSITION_TYPE_NONE = raw.GTK_STACK_TRANSITION_TYPE_NONE;
 pub const gtk_label_new = raw.gtk_label_new;
 pub const GtkButton = raw.GtkButton;
 pub const gtk_button_new_with_label = raw.gtk_button_new_with_label;
@@ -336,6 +338,18 @@ pub const gtk_widget_add_tick_callback = raw.gtk_widget_add_tick_callback;
 // GDK key utilities
 pub const gdk_keyval_to_unicode = raw.gdk_keyval_to_unicode;
 pub const gdk_keyval_to_lower = raw.gdk_keyval_to_lower;
+
+// GtkWindow icon
+pub const gtk_window_set_icon_name = raw.gtk_window_set_icon_name;
+
+// GLib file utilities
+pub const g_get_user_data_dir = raw.g_get_user_data_dir;
+pub const g_mkdir_with_parents = raw.g_mkdir_with_parents;
+pub const g_file_test = raw.g_file_test;
+pub const G_FILE_TEST_EXISTS = raw.G_FILE_TEST_EXISTS;
+
+// GApplication
+pub const g_application_quit = raw.g_application_quit;
 
 // libnotify
 pub const notify_init = raw.notify_init;

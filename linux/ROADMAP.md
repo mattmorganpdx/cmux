@@ -74,6 +74,7 @@ So this roadmap is written from the perspective of an AI agent who is both the b
 - [x] Terminal resize not working on Linux — Ghostty's resize handling had a Darwin-specific clause; patched in fork and updated libghostty binary
 - [x] `set_title` crash on Linux — fixed alongside resize patch
 - [x] Sidebar workspace click stealing keyboard focus from terminal — made GtkListBox non-focusable and reordered syncSelection before terminal focus in switchWorkspace
+- [x] Workspace switching destroys terminal sessions — `gtk_box_remove` triggered GTK4 unrealize cascade, killing Ghostty surfaces. Replaced `GtkBox` content area with `GtkStack` so switching workspaces just flips visibility; all terminals stay realized with GL contexts and shell sessions intact
 
 ---
 

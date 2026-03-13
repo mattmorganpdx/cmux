@@ -674,9 +674,9 @@ fn doWorkspaceClose(userdata: c.gpointer) callconv(.c) c.gboolean {
     defer std.heap.c_allocator.destroy(ctx);
 
     if (ctx.id) |id| {
-        _ = ctx.window.tab_manager.closeWorkspaceById(@intCast(id));
+        _ = ctx.window.closeWorkspaceById(id);
     } else {
-        _ = ctx.window.tab_manager.closeWorkspace(ctx.index);
+        _ = ctx.window.closeWorkspaceByIndex(ctx.index);
     }
 
     // Rebuild sidebar to reflect the change

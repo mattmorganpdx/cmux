@@ -33,8 +33,13 @@ pane_widgets: std.AutoHashMap(PaneTree.NodeId, *TerminalWidget),
 /// For split nodes: a GtkPaned widget.
 node_widgets: std.AutoHashMap(PaneTree.NodeId, *c.GtkWidget),
 
-/// The main content area where the current workspace's widget tree lives.
-content_box: *c.GtkBox,
+/// GtkStack that holds per-workspace container boxes.  Switching the
+/// visible child preserves GL contexts (and therefore Ghostty surfaces)
+/// because GtkStack keeps non-visible children realized.
+content_stack: *c.GtkStack,
+
+/// Per-workspace wrapper boxes inside the stack, keyed by workspace ID.
+workspace_boxes: std.AutoHashMap(Workspace.WorkspaceId, *c.GtkBox),
 
 /// The workspace sidebar.
 sidebar: *Sidebar,
@@ -73,10 +78,11 @@ pub fn create(gtk_app: *c.GtkApplication, app: *App) !*Window {
     c.gtk_paned_set_shrink_start_child(main_paned, 0);
     c.gtk_paned_set_shrink_end_child(main_paned, 0);
 
-    // The content area where the current workspace's split tree lives
-    const content_box: *c.GtkBox = @ptrCast(c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0));
-    c.gtk_widget_set_hexpand(@as(*c.GtkWidget, @ptrCast(content_box)), 1);
-    c.gtk_widget_set_vexpand(@as(*c.GtkWidget, @ptrCast(content_box)), 1);
+    // GtkStack content area — keeps all workspace widget trees alive
+    const content_stack: *c.GtkStack = @ptrCast(@alignCast(c.gtk_stack_new()));
+    c.gtk_stack_set_transition_type(content_stack, c.GTK_STACK_TRANSITION_TYPE_NONE);
+    c.gtk_widget_set_hexpand(@as(*c.GtkWidget, @ptrCast(@alignCast(content_stack))), 1);
+    c.gtk_widget_set_vexpand(@as(*c.GtkWidget, @ptrCast(@alignCast(content_stack))), 1);
 
     var self = try alloc.create(Window);
     self.* = .{
@@ -85,7 +91,8 @@ pub fn create(gtk_app: *c.GtkApplication, app: *App) !*Window {
         .tab_manager = TabManager.init(alloc),
         .pane_widgets = std.AutoHashMap(PaneTree.NodeId, *TerminalWidget).init(alloc),
         .node_widgets = std.AutoHashMap(PaneTree.NodeId, *c.GtkWidget).init(alloc),
-        .content_box = content_box,
+        .content_stack = content_stack,
+        .workspace_boxes = std.AutoHashMap(Workspace.WorkspaceId, *c.GtkBox).init(alloc),
         .sidebar = undefined, // will be set below
         .command_palette = undefined, // will be set below
         .search_overlay = undefined, // will be set below
@@ -99,7 +106,7 @@ pub fn create(gtk_app: *c.GtkApplication, app: *App) !*Window {
 
     // Layout: sidebar | content (paned provides draggable divider)
     c.gtk_paned_set_start_child(main_paned, sidebar.widget());
-    c.gtk_paned_set_end_child(main_paned, @as(*c.GtkWidget, @ptrCast(content_box)));
+    c.gtk_paned_set_end_child(main_paned, @as(*c.GtkWidget, @ptrCast(@alignCast(content_stack))));
     c.gtk_paned_set_position(main_paned, 200);
 
     // Wrap in overlay for command palette + search overlay
@@ -121,6 +128,7 @@ pub fn create(gtk_app: *c.GtkApplication, app: *App) !*Window {
     // Create the first workspace with a single terminal pane
     const ws = try self.tab_manager.createWorkspace();
     try self.buildWorkspaceWidgets(ws);
+    self.showWorkspaceInStack(ws.id);
 
     // Update sidebar to reflect the new workspace
     self.sidebar.rebuild();
@@ -161,9 +169,10 @@ pub fn createFromSession(gtk_app: *c.GtkApplication, app: *App, snap: *const ses
     c.gtk_paned_set_shrink_start_child(main_paned, 0);
     c.gtk_paned_set_shrink_end_child(main_paned, 0);
 
-    const content_box: *c.GtkBox = @ptrCast(c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0));
-    c.gtk_widget_set_hexpand(@as(*c.GtkWidget, @ptrCast(content_box)), 1);
-    c.gtk_widget_set_vexpand(@as(*c.GtkWidget, @ptrCast(content_box)), 1);
+    const content_stack: *c.GtkStack = @ptrCast(@alignCast(c.gtk_stack_new()));
+    c.gtk_stack_set_transition_type(content_stack, c.GTK_STACK_TRANSITION_TYPE_NONE);
+    c.gtk_widget_set_hexpand(@as(*c.GtkWidget, @ptrCast(@alignCast(content_stack))), 1);
+    c.gtk_widget_set_vexpand(@as(*c.GtkWidget, @ptrCast(@alignCast(content_stack))), 1);
 
     var self = try alloc.create(Window);
     self.* = .{
@@ -172,7 +181,8 @@ pub fn createFromSession(gtk_app: *c.GtkApplication, app: *App, snap: *const ses
         .tab_manager = TabManager.init(alloc),
         .pane_widgets = std.AutoHashMap(PaneTree.NodeId, *TerminalWidget).init(alloc),
         .node_widgets = std.AutoHashMap(PaneTree.NodeId, *c.GtkWidget).init(alloc),
-        .content_box = content_box,
+        .content_stack = content_stack,
+        .workspace_boxes = std.AutoHashMap(Workspace.WorkspaceId, *c.GtkBox).init(alloc),
         .sidebar = undefined,
         .command_palette = undefined,
         .search_overlay = undefined,
@@ -184,7 +194,7 @@ pub fn createFromSession(gtk_app: *c.GtkApplication, app: *App, snap: *const ses
     self.sidebar = sidebar;
 
     c.gtk_paned_set_start_child(main_paned, sidebar.widget());
-    c.gtk_paned_set_end_child(main_paned, @as(*c.GtkWidget, @ptrCast(content_box)));
+    c.gtk_paned_set_end_child(main_paned, @as(*c.GtkWidget, @ptrCast(@alignCast(content_stack))));
     c.gtk_paned_set_position(main_paned, 200);
 
     // Wrap in overlay for command palette + search overlay
@@ -206,6 +216,7 @@ pub fn createFromSession(gtk_app: *c.GtkApplication, app: *App, snap: *const ses
         // No workspaces in snapshot — create a default one
         const ws = try self.tab_manager.createWorkspace();
         try self.buildWorkspaceWidgets(ws);
+        self.showWorkspaceInStack(ws.id);
     } else {
         for (snap.workspaces) |*ws_snap| {
             const ws = try alloc.create(Workspace);
@@ -232,9 +243,10 @@ pub fn createFromSession(gtk_app: *c.GtkApplication, app: *App, snap: *const ses
         else
             0;
 
-        // Build widgets for the selected workspace
+        // Build widgets for the selected workspace only (others are lazily built)
         if (self.tab_manager.selectedWorkspace()) |ws| {
             try self.buildWorkspaceWidgets(ws);
+            self.showWorkspaceInStack(ws.id);
         }
     }
 
@@ -262,6 +274,7 @@ pub fn deinit(self: *Window) void {
     }
     self.pane_widgets.deinit();
     self.node_widgets.deinit();
+    self.workspace_boxes.deinit();
     self.search_overlay.deinit();
     self.command_palette.deinit();
     self.sidebar.deinit();
@@ -273,21 +286,62 @@ pub fn deinit(self: *Window) void {
 // Widget tree building
 // ------------------------------------------------------------------
 
-/// Build the GTK widget tree for a workspace and attach it to the content area.
+/// Build the GTK widget tree for a workspace and add it to the content stack.
+/// Each workspace gets its own wrapper GtkBox inside the GtkStack so that
+/// switching workspaces is just a visibility toggle (no unrealize/realize).
 fn buildWorkspaceWidgets(self: *Window, ws: *Workspace) !void {
     if (ws.pane_tree.root) |root_id| {
         const root_widget = try self.buildNodeWidget(ws, root_id);
-        c.gtk_box_append(self.content_box, root_widget);
+        const box = try self.getOrCreateWorkspaceBox(ws);
+        c.gtk_box_append(box, root_widget);
     }
 }
 
+/// Get (or create) the per-workspace wrapper box inside the content stack.
+fn getOrCreateWorkspaceBox(self: *Window, ws: *Workspace) !*c.GtkBox {
+    if (self.workspace_boxes.get(ws.id)) |box| return box;
+
+    const box: *c.GtkBox = @ptrCast(c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0));
+    c.gtk_widget_set_hexpand(@as(*c.GtkWidget, @ptrCast(box)), 1);
+    c.gtk_widget_set_vexpand(@as(*c.GtkWidget, @ptrCast(box)), 1);
+
+    var name_buf: [32]u8 = undefined;
+    const name = std.fmt.bufPrintZ(&name_buf, "ws-{d}", .{ws.id}) catch return error.FormatError;
+    _ = c.gtk_stack_add_named(self.content_stack, @as(*c.GtkWidget, @ptrCast(box)), name.ptr);
+
+    try self.workspace_boxes.put(ws.id, box);
+    return box;
+}
+
+/// Format a workspace ID into a stack child name.
+fn wsStackName(buf: *[32]u8, ws_id: Workspace.WorkspaceId) [*:0]const u8 {
+    const s = std.fmt.bufPrintZ(buf, "ws-{d}", .{ws_id}) catch "ws-0";
+    return s.ptr;
+}
+
+/// Show a workspace's box in the content stack.
+fn showWorkspaceInStack(self: *Window, ws_id: Workspace.WorkspaceId) void {
+    var name_buf: [32]u8 = undefined;
+    const name = wsStackName(&name_buf, ws_id);
+    c.gtk_stack_set_visible_child_name(self.content_stack, name);
+}
+
 /// Recursively build GTK widgets for a tree node.
+/// Reuses existing TerminalWidgets when available (e.g. after break/join).
 fn buildNodeWidget(self: *Window, ws: *Workspace, node_id: PaneTree.NodeId) !*c.GtkWidget {
     const node = ws.pane_tree.getNode(node_id) orelse return error.InvalidTree;
 
     switch (node) {
         .pane => {
-            // Create a terminal widget for this pane
+            // Reuse existing terminal widget if available (break/join case)
+            if (self.pane_widgets.get(node_id)) |tw| {
+                const widget = tw.widget();
+                tw.workspace_id = ws.id;
+                try self.node_widgets.put(node_id, widget);
+                return widget;
+            }
+
+            // Create a new terminal widget for this pane
             const main_mod = @import("main.zig");
             const sock_path: ?[*:0]const u8 = if (main_mod.global_server) |srv| srv.getSocketPathZ() else null;
             const tw = try TerminalWidget.create(self.app, ws.getCwd(), node_id, ws.id, sock_path);
@@ -459,9 +513,11 @@ pub fn splitFocused(self: *Window, direction: PaneTree.SplitDirection) !void {
             }
         }
     } else {
-        // Root level — remove from content_box and add paned
-        c.gtk_box_remove(self.content_box, old_widget);
-        c.gtk_box_append(self.content_box, paned_widget);
+        // Root level — swap inside the workspace's container box
+        if (self.workspace_boxes.get(ws.id)) |ws_box| {
+            c.gtk_box_remove(ws_box, old_widget);
+            c.gtk_box_append(ws_box, paned_widget);
+        }
     }
 
     // Now set the children of the new paned
@@ -544,9 +600,11 @@ pub fn closeFocused(self: *Window) !void {
                     }
                 }
             } else {
-                // Root level
-                c.gtk_box_remove(self.content_box, parent_widget.?);
-                c.gtk_box_append(self.content_box, sibling_widget.?);
+                // Root level — swap inside the workspace's container box
+                if (self.workspace_boxes.get(ws.id)) |ws_box| {
+                    c.gtk_box_remove(ws_box, parent_widget.?);
+                    c.gtk_box_append(ws_box, sibling_widget.?);
+                }
             }
         }
 
@@ -574,13 +632,11 @@ pub fn closeFocused(self: *Window) !void {
 
 /// Create a new workspace and switch to it.
 pub fn createWorkspace(self: *Window) !void {
-    // Detach current workspace's widgets
-    self.detachCurrentWorkspace();
-
     const ws = try self.tab_manager.createWorkspace();
     self.tab_manager.selectIndex(self.tab_manager.workspaces.items.len - 1);
 
     try self.buildWorkspaceWidgets(ws);
+    self.showWorkspaceInStack(ws.id);
 
     // Update sidebar
     self.sidebar.rebuild();
@@ -598,11 +654,16 @@ pub fn switchWorkspace(self: *Window, index: usize) !void {
         if (sel == index) return;
     }
 
-    self.detachCurrentWorkspace();
     self.tab_manager.selectIndex(index);
 
     if (self.tab_manager.selectedWorkspace()) |ws| {
-        try self.buildWorkspaceWidgets(ws);
+        // Build widgets lazily on first visit (e.g. session restore)
+        if (!self.workspace_boxes.contains(ws.id)) {
+            try self.buildWorkspaceWidgets(ws);
+        }
+
+        // Flip the stack's visible child — no unrealize cascade
+        self.showWorkspaceInStack(ws.id);
 
         // Sync sidebar selection before focusing terminal, so GTK's
         // listbox selection handling doesn't steal focus back.
@@ -772,14 +833,48 @@ pub fn previousWorkspace(self: *Window) void {
     }
 }
 
-/// Remove the current workspace's root widget from the content area.
-fn detachCurrentWorkspace(self: *Window) void {
-    const ws = self.tab_manager.selectedWorkspace() orelse return;
-    if (ws.pane_tree.root) |root_id| {
-        if (self.node_widgets.get(root_id)) |root_widget| {
-            c.gtk_box_remove(self.content_box, root_widget);
+/// Remove a workspace's widget tree from the content stack entirely.
+/// Only used when a workspace is being closed/deleted.
+fn removeWorkspaceFromStack(self: *Window, ws_id: Workspace.WorkspaceId) void {
+    if (self.workspace_boxes.get(ws_id)) |box| {
+        c.gtk_stack_remove(self.content_stack, @as(*c.GtkWidget, @ptrCast(box)));
+        _ = self.workspace_boxes.remove(ws_id);
+    }
+}
+
+/// Close a workspace by ID, cleaning up its widget tree from the stack.
+pub fn closeWorkspaceById(self: *Window, ws_id: Workspace.WorkspaceId) bool {
+    self.removeWorkspaceFromStack(ws_id);
+    const closed = self.tab_manager.closeWorkspaceById(ws_id);
+    if (closed) {
+        // If the selected workspace was closed, show the new selection
+        if (self.tab_manager.selectedWorkspace()) |ws| {
+            if (!self.workspace_boxes.contains(ws.id)) {
+                self.buildWorkspaceWidgets(ws) catch {};
+            }
+            self.showWorkspaceInStack(ws.id);
         }
     }
+    return closed;
+}
+
+/// Close a workspace by index, cleaning up its widget tree from the stack.
+pub fn closeWorkspaceByIndex(self: *Window, index: usize) bool {
+    // Get the workspace ID before closing so we can clean up the stack
+    if (index < self.tab_manager.workspaces.items.len) {
+        const ws_id = self.tab_manager.workspaces.items[index].id;
+        self.removeWorkspaceFromStack(ws_id);
+    }
+    const closed = self.tab_manager.closeWorkspace(index);
+    if (closed) {
+        if (self.tab_manager.selectedWorkspace()) |ws| {
+            if (!self.workspace_boxes.contains(ws.id)) {
+                self.buildWorkspaceWidgets(ws) catch {};
+            }
+            self.showWorkspaceInStack(ws.id);
+        }
+    }
+    return closed;
 }
 
 /// Sync GtkPaned positions to match the pane tree's divider_position values.
@@ -816,11 +911,12 @@ fn syncNodeDivider(self: *Window, ws: *Workspace, node_id: PaneTree.NodeId) void
 /// TerminalWidget instances. Used after pane.swap to reflect new layout.
 pub fn rebuildCurrentWorkspace(self: *Window) !void {
     const ws = self.tab_manager.selectedWorkspace() orelse return;
+    const ws_box = self.workspace_boxes.get(ws.id) orelse return;
 
-    // Detach the old root widget
+    // Detach the old root widget from the workspace box
     if (ws.pane_tree.root) |root_id| {
         if (self.node_widgets.get(root_id)) |root_widget| {
-            c.gtk_box_remove(self.content_box, root_widget);
+            c.gtk_box_remove(ws_box, root_widget);
         }
     }
 
@@ -841,7 +937,7 @@ pub fn rebuildCurrentWorkspace(self: *Window) !void {
     // Rebuild from the tree using existing terminal widgets
     if (ws.pane_tree.root) |root_id| {
         const root_widget = try self.rebuildNodeFromExisting(ws, root_id);
-        c.gtk_box_append(self.content_box, root_widget);
+        c.gtk_box_append(ws_box, root_widget);
     }
 }
 
