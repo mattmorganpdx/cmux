@@ -1,5 +1,6 @@
 const std = @import("std");
 const Workspace = @import("workspace.zig");
+const PaneTree = @import("pane_tree.zig");
 
 const log = std.log.scoped(.tab_manager);
 
@@ -24,6 +25,11 @@ history_pos: usize = 0,
 /// Next workspace id.
 next_id: WorkspaceId = 1,
 
+/// Global node ID counter shared by all PaneTree instances.
+/// Ensures node IDs are unique across workspaces so that
+/// Window's pane_widgets/node_widgets maps don't collide.
+next_node_id: PaneTree.NodeId = 1,
+
 pub fn init(alloc: Allocator) TabManager {
     return .{
         .alloc = alloc,
@@ -45,7 +51,7 @@ pub fn createWorkspace(self: *TabManager) !*Workspace {
     self.next_id += 1;
 
     const ws = try self.alloc.create(Workspace);
-    ws.* = Workspace.init(self.alloc, id);
+    ws.* = Workspace.initShared(self.alloc, id, &self.next_node_id);
 
     // Set a default title
     var buf: [32]u8 = undefined;

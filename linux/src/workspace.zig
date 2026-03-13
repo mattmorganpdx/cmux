@@ -56,6 +56,14 @@ pub fn init(alloc: Allocator, id: WorkspaceId) Workspace {
     };
 }
 
+/// Initialize with a shared node ID counter (for use via TabManager).
+pub fn initShared(alloc: Allocator, id: WorkspaceId, shared_next_node_id: *PaneTree.NodeId) Workspace {
+    return .{
+        .id = id,
+        .pane_tree = PaneTree.initShared(alloc, shared_next_node_id),
+    };
+}
+
 pub fn deinit(self: *Workspace) void {
     self.pane_tree.deinit();
 }

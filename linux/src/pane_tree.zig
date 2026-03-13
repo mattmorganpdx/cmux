@@ -81,7 +81,11 @@ pub const Rect = struct {
 alloc: Allocator,
 nodes: std.AutoHashMap(NodeId, Node),
 root: ?NodeId = null,
-next_id: NodeId = 1,
+/// Pointer to a shared counter so node IDs are unique across all workspaces.
+/// When null, uses the local `local_next_id` fallback (tests, standalone use).
+shared_next_id: ?*NodeId = null,
+/// Local counter used when no shared counter is provided.
+local_next_id: NodeId = 1,
 /// Currently focused pane.
 focused_pane: ?NodeId = null,
 
@@ -89,6 +93,14 @@ pub fn init(alloc: Allocator) PaneTree {
     return .{
         .alloc = alloc,
         .nodes = std.AutoHashMap(NodeId, Node).init(alloc),
+    };
+}
+
+pub fn initShared(alloc: Allocator, shared_next_id: *NodeId) PaneTree {
+    return .{
+        .alloc = alloc,
+        .nodes = std.AutoHashMap(NodeId, Node).init(alloc),
+        .shared_next_id = shared_next_id,
     };
 }
 
@@ -181,9 +193,30 @@ pub fn paneCount(self: *const PaneTree) usize {
 // ------------------------------------------------------------------
 
 pub fn nextNodeId(self: *PaneTree) NodeId {
-    const id = self.next_id;
-    self.next_id += 1;
+    if (self.shared_next_id) |ptr| {
+        const id = ptr.*;
+        ptr.* += 1;
+        return id;
+    }
+    const id = self.local_next_id;
+    self.local_next_id += 1;
     return id;
+}
+
+/// Get the current next_id value (from shared or local counter).
+pub fn getNextId(self: *const PaneTree) NodeId {
+    if (self.shared_next_id) |ptr| return ptr.*;
+    return self.local_next_id;
+}
+
+/// Set the next_id value (updates shared or local counter).
+pub fn setNextId(self: *PaneTree, val: NodeId) void {
+    if (self.shared_next_id) |ptr| {
+        // Only advance the shared counter, never retreat
+        if (val > ptr.*) ptr.* = val;
+    } else {
+        self.local_next_id = val;
+    }
 }
 
 /// Create the initial root pane. Returns the new pane's id.
@@ -394,9 +427,7 @@ pub fn attachPaneAsRoot(self: *PaneTree, pane_id: NodeId) !void {
     self.root = pane_id;
     self.focused_pane = pane_id;
     // Ensure next_id is past this pane_id
-    if (pane_id >= self.next_id) {
-        self.next_id = pane_id + 1;
-    }
+    self.setNextId(pane_id + 1);
 }
 
 /// Find the first (leftmost/topmost) pane in a subtree.

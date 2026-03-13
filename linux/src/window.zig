@@ -218,9 +218,19 @@ pub fn createFromSession(gtk_app: *c.GtkApplication, app: *App, snap: *const ses
         try self.buildWorkspaceWidgets(ws);
         self.showWorkspaceInStack(ws.id);
     } else {
+        // First pass: find the max next_node_id across all workspaces
+        // so the shared counter starts high enough.
+        var max_node_id: PaneTree.NodeId = 1;
+        for (snap.workspaces) |*ws_snap| {
+            if (ws_snap.next_node_id > max_node_id) {
+                max_node_id = ws_snap.next_node_id;
+            }
+        }
+        self.tab_manager.next_node_id = max_node_id;
+
         for (snap.workspaces) |*ws_snap| {
             const ws = try alloc.create(Workspace);
-            ws.* = Workspace.init(alloc, ws_snap.id);
+            ws.* = Workspace.initShared(alloc, ws_snap.id, &self.tab_manager.next_node_id);
             ws.setTitle(ws_snap.title);
             if (ws_snap.cwd.len > 0) ws.setCwd(ws_snap.cwd);
             ws.pinned = ws_snap.pinned;
@@ -324,6 +334,23 @@ fn showWorkspaceInStack(self: *Window, ws_id: Workspace.WorkspaceId) void {
     var name_buf: [32]u8 = undefined;
     const name = wsStackName(&name_buf, ws_id);
     c.gtk_stack_set_visible_child_name(self.content_stack, name);
+}
+
+/// Queue a GL render on every terminal in a workspace.  Needed after
+/// a GtkStack visibility switch — GTK keeps hidden children realized
+/// but does not repaint them when they become visible again.
+fn queueRenderForWorkspace(self: *Window, ws: *Workspace) void {
+    var it = ws.pane_tree.nodes.iterator();
+    while (it.next()) |entry| {
+        switch (entry.value_ptr.*) {
+            .pane => {
+                if (self.pane_widgets.get(entry.key_ptr.*)) |tw| {
+                    tw.queueRender();
+                }
+            },
+            .split => {},
+        }
+    }
 }
 
 /// Recursively build GTK widgets for a tree node.
@@ -665,6 +692,12 @@ pub fn switchWorkspace(self: *Window, index: usize) !void {
         // Flip the stack's visible child — no unrealize cascade
         self.showWorkspaceInStack(ws.id);
 
+        // Queue a render on all terminals in this workspace so they
+        // repaint after becoming visible again.  GtkStack keeps hidden
+        // children realized but GTK won't automatically redraw them
+        // when they reappear.
+        self.queueRenderForWorkspace(ws);
+
         // Sync sidebar selection before focusing terminal, so GTK's
         // listbox selection handling doesn't steal focus back.
         self.sidebar.syncSelection();
@@ -716,10 +749,10 @@ pub fn breakPaneToNewWorkspace(self: *Window, pane_id: PaneTree.NodeId) !void {
     // Rebuild the current workspace's GTK widget tree
     try self.rebuildCurrentWorkspace();
 
-    // Create a new workspace
+    // Create a new workspace with shared node ID counter
     const alloc = self.alloc;
     const new_ws = try alloc.create(Workspace);
-    new_ws.* = Workspace.init(alloc, self.tab_manager.next_id);
+    new_ws.* = Workspace.initShared(alloc, self.tab_manager.next_id, &self.tab_manager.next_node_id);
     self.tab_manager.next_id += 1;
 
     // Attach the pane to the new workspace's tree
@@ -794,9 +827,7 @@ pub fn joinPaneToWorkspace(self: *Window, pane_id: PaneTree.NodeId, target_ws_id
         } });
 
         target.pane_tree.root = new_split_id;
-        if (pane_id >= target.pane_tree.next_id) {
-            target.pane_tree.next_id = pane_id + 1;
-        }
+        target.pane_tree.setNextId(pane_id + 1);
     } else {
         try target.pane_tree.attachPaneAsRoot(pane_id);
     }

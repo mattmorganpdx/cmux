@@ -80,7 +80,7 @@ fn captureWorkspace(alloc: Allocator, ws: *Workspace) !WorkspaceSnapshot {
         .pinned = ws.pinned,
         .color = try alloc.dupe(u8, ws.getColor() orelse ""),
         .focused_pane = ws.pane_tree.focused_pane,
-        .next_node_id = ws.pane_tree.next_id,
+        .next_node_id = ws.pane_tree.getNextId(),
         .layout = layout,
     };
 }
@@ -511,7 +511,7 @@ pub fn restorePaneTree(tree: *PaneTree, ws_snap: *const WorkspaceSnapshot) !?Pan
     const layout = ws_snap.layout orelse return null;
     const root_id = try restoreLayoutNode(tree, &layout, null);
     tree.root = root_id;
-    tree.next_id = ws_snap.next_node_id;
+    tree.setNextId(ws_snap.next_node_id);
     tree.focused_pane = ws_snap.focused_pane;
     return root_id;
 }
