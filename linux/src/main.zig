@@ -51,10 +51,15 @@ pub fn main() !void {
         }
     }
 
-    // Cleanup
+    // Cleanup — order matters: free surfaces before the ghostty app
     if (global_server) |server| {
         server.deinit();
         global_server = null;
+    }
+
+    if (global_window) |window| {
+        window.deinit();
+        global_window = null;
     }
 
     if (global_app) |app| {
@@ -99,9 +104,115 @@ fn setupCssProvider() void {
     log.info("CSS provider loaded", .{});
 }
 
+/// Install the app icon and .desktop file to XDG paths so GNOME shows
+/// the icon in the taskbar/overview. Only copies if the files are missing.
+fn installDesktopFiles() void {
+    const data_dir = c.g_get_user_data_dir() orelse return;
+    const data_dir_str = std.mem.span(data_dir);
+
+    // Install icon to ~/.local/share/icons/hicolor/128x128/apps/com.cmuxterm.linux.png
+    var icon_dir_buf: [512]u8 = undefined;
+    const icon_dir = std.fmt.bufPrintZ(&icon_dir_buf, "{s}/icons/hicolor/128x128/apps", .{data_dir_str}) catch return;
+    _ = c.g_mkdir_with_parents(icon_dir.ptr, 0o755);
+
+    var icon_dest_buf: [512]u8 = undefined;
+    const icon_dest = std.fmt.bufPrintZ(&icon_dest_buf, "{s}/com.cmuxterm.linux.png", .{icon_dir}) catch return;
+
+    if (c.g_file_test(icon_dest.ptr, c.G_FILE_TEST_EXISTS) == 0) {
+        // Find icon relative to executable
+        const icon_src = findResourceFile("resources/cmux-icon.png") orelse {
+            log.warn("Could not find cmux-icon.png resource", .{});
+            return;
+        };
+        copyFile(icon_src, icon_dest) catch |err| {
+            log.warn("Failed to install icon: {}", .{err});
+        };
+    }
+
+    // Install .desktop file to ~/.local/share/applications/
+    var desktop_dir_buf: [512]u8 = undefined;
+    const desktop_dir = std.fmt.bufPrintZ(&desktop_dir_buf, "{s}/applications", .{data_dir_str}) catch return;
+    _ = c.g_mkdir_with_parents(desktop_dir.ptr, 0o755);
+
+    var desktop_dest_buf: [512]u8 = undefined;
+    const desktop_dest = std.fmt.bufPrintZ(&desktop_dest_buf, "{s}/com.cmuxterm.linux.desktop", .{desktop_dir}) catch return;
+
+    if (c.g_file_test(desktop_dest.ptr, c.G_FILE_TEST_EXISTS) == 0) {
+        const desktop_src = findResourceFile("resources/com.cmuxterm.linux.desktop") orelse {
+            log.warn("Could not find .desktop resource", .{});
+            return;
+        };
+        copyFile(desktop_src, desktop_dest) catch |err| {
+            log.warn("Failed to install .desktop file: {}", .{err});
+        };
+    }
+
+    log.info("Desktop files checked/installed", .{});
+}
+
+/// Find a resource file relative to the executable path.
+fn findResourceFile(rel_path: []const u8) ?[*:0]const u8 {
+    // Try relative to executable
+    const exe_path = std.fs.selfExePathAlloc(std.heap.c_allocator) catch return null;
+    defer std.heap.c_allocator.free(exe_path);
+    const exe_dir = std.fs.path.dirname(exe_path) orelse return null;
+    // Go up one level from zig-out/bin/ to the project root
+    const project_dir = std.fs.path.dirname(exe_dir) orelse exe_dir;
+    const project_root = std.fs.path.dirname(project_dir) orelse project_dir;
+
+    var buf: [512]u8 = undefined;
+    const full_path = std.fmt.bufPrintZ(&buf, "{s}/{s}", .{ project_root, rel_path }) catch return null;
+
+    const file = std.fs.openFileAbsoluteZ(full_path.ptr, .{}) catch return null;
+    file.close();
+
+    // Return a stable copy
+    const copy = std.heap.c_allocator.allocSentinel(u8, full_path.len, 0) catch return null;
+    @memcpy(copy, full_path);
+    return copy.ptr;
+}
+
+/// Copy a file from src path to dest path.
+fn copyFile(src: [*:0]const u8, dest: [*:0]const u8) !void {
+    const src_file = try std.fs.openFileAbsoluteZ(src, .{});
+    defer src_file.close();
+    const dest_file = try std.fs.createFileAbsoluteZ(dest, .{});
+    defer dest_file.close();
+
+    var buf: [4096]u8 = undefined;
+    while (true) {
+        const n = try src_file.read(&buf);
+        if (n == 0) break;
+        try dest_file.writeAll(buf[0..n]);
+    }
+}
+
+/// Handle window close-request: save session and let GTK destroy the window.
+/// Returning 0 (FALSE) lets GTK proceed with window destruction; when the last
+/// window is destroyed GtkApplication automatically quits the main loop.
+fn onCloseRequest(_: *c.GtkWindow, _: c.gpointer) callconv(.c) c.gboolean {
+    // Save session before the window is destroyed
+    if (global_window) |window| {
+        const alloc = std.heap.c_allocator;
+        if (session.captureSession(alloc, &window.tab_manager)) |snap| {
+            defer session.freeSessionSnapshot(alloc, &snap);
+            session.writeSessionFile(alloc, &snap) catch |err| {
+                log.warn("Failed to save session on close: {}", .{err});
+            };
+        } else |err| {
+            log.warn("Failed to capture session on close: {}", .{err});
+        }
+    }
+
+    return 0; // let GTK destroy the window, which quits the application
+}
+
 fn onActivate(gtk_app: *c.GtkApplication, _: c.gpointer) callconv(.c) void {
     // Initialize libnotify for desktop notifications
     _ = c.notify_init("cmux");
+
+    // Install icon and .desktop file to XDG paths
+    installDesktopFiles();
 
     // Set up custom CSS theme
     setupCssProvider();
@@ -137,6 +248,19 @@ fn onActivate(gtk_app: *c.GtkApplication, _: c.gpointer) callconv(.c) void {
         };
     };
     global_window = window;
+
+    // Set window icon name (matches installed icon at com.cmuxterm.linux.png)
+    c.gtk_window_set_icon_name(@ptrCast(window.gtk_window), "com.cmuxterm.linux");
+
+    // Connect close-request so closing the window quits the application
+    _ = c.g_signal_connect_data(
+        @as(c.gpointer, @ptrCast(window.gtk_window)),
+        "close-request",
+        @as(c.GCallback, @ptrCast(&onCloseRequest)),
+        @as(c.gpointer, @ptrCast(gtk_app)),
+        null,
+        0,
+    );
 
     // Start autosave timer (every 8 seconds)
     _ = c.g_timeout_add_seconds(8, &session.onAutosave, @as(c.gpointer, @ptrCast(window)));
