@@ -125,5 +125,17 @@ fn onKeyPressed(
         return 1;
     }
 
+    // Ctrl+Shift+Q: Close workspace
+    if (keyval == c.GDK_KEY_Q or keyval == c.GDK_KEY_q) {
+        window.closeCurrentWorkspace();
+        return 1;
+    }
+
+    // Ctrl+Shift+`: Last workspace (most recently used)
+    if (keyval == c.GDK_KEY_grave) {
+        window.lastWorkspace();
+        return 1;
+    }
+
     return 0; // Not handled
 }

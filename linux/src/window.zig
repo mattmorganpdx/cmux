@@ -873,6 +873,27 @@ fn removeWorkspaceFromStack(self: *Window, ws_id: Workspace.WorkspaceId) void {
     }
 }
 
+/// Close the currently selected workspace.
+pub fn closeCurrentWorkspace(self: *Window) void {
+    const ws = self.tab_manager.selectedWorkspace() orelse return;
+    // Don't close the last workspace
+    if (self.tab_manager.workspaces.items.len <= 1) return;
+    _ = self.closeWorkspaceById(ws.id);
+    self.sidebar.rebuild();
+}
+
+/// Switch to the last (most recently used) workspace.
+pub fn lastWorkspace(self: *Window) void {
+    const old_index = self.tab_manager.selected_index orelse return;
+    self.tab_manager.selectLast();
+    const new_index = self.tab_manager.selected_index orelse return;
+    if (old_index != new_index) {
+        self.switchWorkspace(new_index) catch |err| {
+            log.warn("Failed to switch to last workspace: {}", .{err});
+        };
+    }
+}
+
 /// Close a workspace by ID, cleaning up its widget tree from the stack.
 pub fn closeWorkspaceById(self: *Window, ws_id: Workspace.WorkspaceId) bool {
     self.removeWorkspaceFromStack(ws_id);

@@ -18,33 +18,51 @@ inline fn asWidget(ptr: anytype) *c.GtkWidget {
 pub const Action = struct {
     name: []const u8,
     description: []const u8,
+    shortcut: []const u8,
     callback: *const fn (*Window) void,
 };
 
 /// Registered actions.
 const actions = [_]Action{
-    .{ .name = "New Workspace", .description = "Create a new workspace", .callback = &doNewWorkspace },
-    .{ .name = "Split Right", .description = "Split the focused pane to the right", .callback = &doSplitRight },
-    .{ .name = "Split Down", .description = "Split the focused pane downward", .callback = &doSplitDown },
-    .{ .name = "Close Pane", .description = "Close the focused pane", .callback = &doClosePane },
-    .{ .name = "Next Workspace", .description = "Switch to the next workspace", .callback = &doNextWorkspace },
-    .{ .name = "Previous Workspace", .description = "Switch to the previous workspace", .callback = &doPreviousWorkspace },
-    .{ .name = "Toggle Sidebar", .description = "Show or hide the sidebar", .callback = &doToggleSidebar },
-    .{ .name = "Navigate Left", .description = "Move focus to the pane on the left", .callback = &doNavLeft },
-    .{ .name = "Navigate Right", .description = "Move focus to the pane on the right", .callback = &doNavRight },
-    .{ .name = "Navigate Up", .description = "Move focus to the pane above", .callback = &doNavUp },
-    .{ .name = "Navigate Down", .description = "Move focus to the pane below", .callback = &doNavDown },
+    .{ .name = "New Workspace", .description = "Create a new workspace", .shortcut = "Ctrl+Shift+T", .callback = &doNewWorkspace },
+    .{ .name = "Close Workspace", .description = "Close the current workspace", .shortcut = "Ctrl+Shift+Q", .callback = &doCloseWorkspace },
+    .{ .name = "Last Workspace", .description = "Switch to the most recently used workspace", .shortcut = "Ctrl+Shift+`", .callback = &doLastWorkspace },
+    .{ .name = "Split Right", .description = "Split the focused pane to the right", .shortcut = "Ctrl+Shift+D", .callback = &doSplitRight },
+    .{ .name = "Split Down", .description = "Split the focused pane downward", .shortcut = "Ctrl+Shift+E", .callback = &doSplitDown },
+    .{ .name = "Split Left", .description = "Split the focused pane to the left", .shortcut = "", .callback = &doSplitLeft },
+    .{ .name = "Split Up", .description = "Split the focused pane upward", .shortcut = "", .callback = &doSplitUp },
+    .{ .name = "Close Pane", .description = "Close the focused pane", .shortcut = "Ctrl+Shift+W", .callback = &doClosePane },
+    .{ .name = "Next Workspace", .description = "Switch to the next workspace", .shortcut = "Ctrl+Shift+]", .callback = &doNextWorkspace },
+    .{ .name = "Previous Workspace", .description = "Switch to the previous workspace", .shortcut = "Ctrl+Shift+[", .callback = &doPreviousWorkspace },
+    .{ .name = "Toggle Sidebar", .description = "Show or hide the sidebar", .shortcut = "Ctrl+Shift+B", .callback = &doToggleSidebar },
+    .{ .name = "Navigate Left", .description = "Move focus to the pane on the left", .shortcut = "Ctrl+Shift+Left", .callback = &doNavLeft },
+    .{ .name = "Navigate Right", .description = "Move focus to the pane on the right", .shortcut = "Ctrl+Shift+Right", .callback = &doNavRight },
+    .{ .name = "Navigate Up", .description = "Move focus to the pane above", .shortcut = "Ctrl+Shift+Up", .callback = &doNavUp },
+    .{ .name = "Navigate Down", .description = "Move focus to the pane below", .shortcut = "Ctrl+Shift+Down", .callback = &doNavDown },
+    .{ .name = "Terminal Search", .description = "Find text in the terminal", .shortcut = "Ctrl+Shift+F", .callback = &doSearch },
 };
 
 // Action callbacks
 fn doNewWorkspace(w: *Window) void {
     w.createWorkspace() catch |err| log.warn("Failed to create workspace: {}", .{err});
 }
+fn doCloseWorkspace(w: *Window) void {
+    w.closeCurrentWorkspace();
+}
+fn doLastWorkspace(w: *Window) void {
+    w.lastWorkspace();
+}
 fn doSplitRight(w: *Window) void {
     w.splitFocused(.right) catch |err| log.warn("Failed to split right: {}", .{err});
 }
 fn doSplitDown(w: *Window) void {
     w.splitFocused(.down) catch |err| log.warn("Failed to split down: {}", .{err});
+}
+fn doSplitLeft(w: *Window) void {
+    w.splitFocused(.left) catch |err| log.warn("Failed to split left: {}", .{err});
+}
+fn doSplitUp(w: *Window) void {
+    w.splitFocused(.up) catch |err| log.warn("Failed to split up: {}", .{err});
 }
 fn doClosePane(w: *Window) void {
     w.closeFocused() catch |err| log.warn("Failed to close pane: {}", .{err});
@@ -69,6 +87,9 @@ fn doNavUp(w: *Window) void {
 }
 fn doNavDown(w: *Window) void {
     w.navigateFocus(.down);
+}
+fn doSearch(w: *Window) void {
+    w.showSearch();
 }
 
 /// The outer container for the palette overlay widget.
@@ -135,6 +156,16 @@ pub fn create(alloc: Allocator, window: *Window) !*CommandPalette {
         @as(c.gpointer, @ptrCast(search_entry)),
         "search-changed",
         @as(c.GCallback, @ptrCast(&onSearchChanged)),
+        @ptrCast(self),
+        null,
+        0,
+    );
+
+    // Connect row-activated for click execution
+    _ = c.g_signal_connect_data(
+        @as(c.gpointer, @ptrCast(list_box)),
+        "row-activated",
+        @as(c.GCallback, @ptrCast(&onRowActivated)),
         @ptrCast(self),
         null,
         0,
@@ -272,11 +303,16 @@ fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
 fn appendActionRow(list_box: *c.GtkListBox, action: Action) void {
     const row: *c.GtkListBoxRow = @ptrCast(@alignCast(c.gtk_list_box_row_new()));
 
+    // Horizontal box: left side (name + description) and right side (shortcut)
+    const hbox: *c.GtkBox = @ptrCast(c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 8));
+    c.gtk_widget_set_margin_start(asWidget(hbox), 8);
+    c.gtk_widget_set_margin_end(asWidget(hbox), 8);
+    c.gtk_widget_set_margin_top(asWidget(hbox), 4);
+    c.gtk_widget_set_margin_bottom(asWidget(hbox), 4);
+
+    // Left side: name + description stacked vertically
     const vbox: *c.GtkBox = @ptrCast(c.gtk_box_new(c.GTK_ORIENTATION_VERTICAL, 2));
-    c.gtk_widget_set_margin_start(asWidget(vbox), 8);
-    c.gtk_widget_set_margin_end(asWidget(vbox), 8);
-    c.gtk_widget_set_margin_top(asWidget(vbox), 4);
-    c.gtk_widget_set_margin_bottom(asWidget(vbox), 4);
+    c.gtk_widget_set_hexpand(asWidget(vbox), 1);
 
     // Name label
     var name_z: [128]u8 = undefined;
@@ -297,7 +333,22 @@ fn appendActionRow(list_box: *c.GtkListBox, action: Action) void {
     c.gtk_widget_add_css_class(asWidget(desc_label), "dim-label");
     c.gtk_box_append(vbox, asWidget(desc_label));
 
-    c.gtk_list_box_row_set_child(row, asWidget(vbox));
+    c.gtk_box_append(hbox, asWidget(vbox));
+
+    // Right side: shortcut label
+    if (action.shortcut.len > 0) {
+        var shortcut_z: [64]u8 = undefined;
+        const sc_len = @min(action.shortcut.len, shortcut_z.len - 1);
+        @memcpy(shortcut_z[0..sc_len], action.shortcut[0..sc_len]);
+        shortcut_z[sc_len] = 0;
+        const shortcut_label: *c.GtkLabel = @ptrCast(@alignCast(c.gtk_label_new(&shortcut_z)));
+        c.gtk_label_set_xalign(shortcut_label, 1.0);
+        c.gtk_widget_set_valign(asWidget(shortcut_label), c.GTK_ALIGN_CENTER);
+        c.gtk_widget_add_css_class(asWidget(shortcut_label), "dim-label");
+        c.gtk_box_append(hbox, asWidget(shortcut_label));
+    }
+
+    c.gtk_list_box_row_set_child(row, asWidget(hbox));
     c.gtk_list_box_append(list_box, asWidget(row));
 
     // Store the action index on the row
@@ -334,6 +385,24 @@ fn executeSelectedAction(self: *CommandPalette) void {
 // ------------------------------------------------------------------
 // Signal handlers
 // ------------------------------------------------------------------
+
+fn onRowActivated(
+    _: *c.GtkListBox,
+    row: *c.GtkListBoxRow,
+    userdata: c.gpointer,
+) callconv(.c) void {
+    const self: *CommandPalette = @ptrCast(@alignCast(userdata));
+
+    const idx = @intFromPtr(c.g_object_get_data(
+        @as([*c]c.GObject, @ptrCast(row)),
+        "action-idx",
+    ));
+
+    if (idx < actions.len) {
+        self.hide();
+        actions[idx].callback(self.window);
+    }
+}
 
 fn onSearchChanged(
     _: *c.GtkSearchEntry,
