@@ -225,10 +225,11 @@ pub fn show(self: *CommandPalette) void {
     _ = c.gtk_widget_grab_focus(asWidget(self.search_entry));
 }
 
-/// Hide the palette.
+/// Hide the palette and return focus to the terminal.
 pub fn hide(self: *CommandPalette) void {
     self.visible = false;
     c.gtk_widget_set_visible(asWidget(self.container), 0);
+    self.window.focusCurrentTerminal();
 }
 
 /// Toggle visibility.

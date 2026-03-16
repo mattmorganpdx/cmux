@@ -120,6 +120,7 @@ pub fn create(gtk_app: *c.GtkApplication, app: *App) !*Window {
 
     // Create search overlay and add as overlay
     const search = try SearchOverlay.create(alloc);
+    search.window = self;
     self.search_overlay = search;
     c.gtk_overlay_add_overlay(overlay, search.widget());
 
@@ -206,6 +207,7 @@ pub fn createFromSession(gtk_app: *c.GtkApplication, app: *App, snap: *const ses
     c.gtk_overlay_add_overlay(overlay, palette.widget());
 
     const search = try SearchOverlay.create(alloc);
+    search.window = self;
     self.search_overlay = search;
     c.gtk_overlay_add_overlay(overlay, search.widget());
 
@@ -734,6 +736,14 @@ pub fn showSearch(self: *Window) void {
 /// Hide the terminal search overlay.
 pub fn hideSearch(self: *Window) void {
     self.search_overlay.hide();
+}
+
+/// Return keyboard focus to the focused terminal pane.
+pub fn focusCurrentTerminal(self: *Window) void {
+    const ws = self.tab_manager.selectedWorkspace() orelse return;
+    const pane_id = ws.pane_tree.focused_pane orelse return;
+    const tw = self.pane_widgets.get(pane_id) orelse return;
+    _ = c.gtk_widget_grab_focus(tw.widget());
 }
 
 /// Break a pane out into a new workspace.

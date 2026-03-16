@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("c.zig");
 const TerminalWidget = @import("terminal_widget.zig");
+const Window = @import("window.zig");
 
 const log = std.log.scoped(.search_overlay);
 
@@ -27,6 +28,9 @@ visible: bool = false,
 
 /// The current terminal widget being searched (for sending search commands).
 current_surface: ?c.ghostty_surface_t = null,
+
+/// Reference to the parent window for focus restoration.
+window: ?*Window = null,
 
 /// Match count state.
 total_matches: i64 = 0,
@@ -123,7 +127,7 @@ pub fn show(self: *SearchOverlay, surface: ?c.ghostty_surface_t) void {
     _ = c.gtk_widget_grab_focus(asWidget(self.search_entry));
 }
 
-/// Hide the search overlay.
+/// Hide the search overlay and return focus to the terminal.
 pub fn hide(self: *SearchOverlay) void {
     if (!self.visible) return;
     self.visible = false;
@@ -134,6 +138,9 @@ pub fn hide(self: *SearchOverlay) void {
         _ = c.ghostty_surface_binding_action(surface, "end_search", "end_search".len);
     }
     self.current_surface = null;
+
+    // Return focus to the terminal
+    if (self.window) |w| w.focusCurrentTerminal();
 }
 
 /// Update match count from Ghostty search callback.

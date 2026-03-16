@@ -80,6 +80,8 @@ So this roadmap is written from the perspective of an AI agent who is both the b
 - [x] Command palette Enter not executing actions — `GtkSearchEntry` consumes Return key internally, so key event controller never saw it. Connected to the `activate` signal on the search entry instead
 - [x] Command palette arrow keys not scrolling list — added `scrollRowIntoView` using `gtk_widget_compute_point` and `GtkAdjustment` to keep selected row visible
 - [x] Terminal search not working — Ghostty binding action names were wrong (`search:forward:text` → `search:text`, `search:close` → `end_search`, `search:next` → `navigate_search:next`, `search:prev` → `navigate_search:previous`)
+- [x] Keyboard focus lost after closing command palette or search overlay — GTK doesn't auto-refocus when a focused widget is hidden. Added `Window.focusCurrentTerminal()` and call it from both `CommandPalette.hide()` and `SearchOverlay.hide()`
+- [x] Scroll wheel inverted in terminal — GTK4 scroll `dy` convention is opposite to Ghostty's; negated `dy` before passing to `ghostty_surface_mouse_scroll`
 
 ---
 

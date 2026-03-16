@@ -529,8 +529,8 @@ fn onScroll(
     const self: *TerminalWidget = @ptrCast(@alignCast(userdata));
     if (self.surface == null) return 0;
 
-    // ghostty_surface_mouse_scroll(surface, dx, dy, scroll_mods)
-    c.ghostty_surface_mouse_scroll(self.surface, dx, dy, 0);
+    // GTK4 scroll direction is inverted relative to Ghostty's expectation
+    c.ghostty_surface_mouse_scroll(self.surface, dx, -dy, 0);
     return 1;
 }
 
