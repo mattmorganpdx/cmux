@@ -1503,7 +1503,7 @@ fn doSearch(userdata: c.gpointer) callconv(.c) c.gboolean {
 
     // Send the search text to Ghostty
     var cmd_buf: [1024]u8 = undefined;
-    const cmd = std.fmt.bufPrint(&cmd_buf, "search:forward:{s}", .{ctx.text}) catch return c.G_SOURCE_REMOVE;
+    const cmd = std.fmt.bufPrint(&cmd_buf, "search:{s}", .{ctx.text}) catch return c.G_SOURCE_REMOVE;
     _ = c.ghostty_surface_binding_action(tw.surface, cmd.ptr, cmd.len);
 
     return c.G_SOURCE_REMOVE;

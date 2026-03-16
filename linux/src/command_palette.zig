@@ -101,6 +101,9 @@ search_entry: *c.GtkSearchEntry,
 /// The list box showing filtered results.
 list_box: *c.GtkListBox,
 
+/// The scrolled window containing the list box.
+scrolled_window: *c.GtkScrolledWindow,
+
 /// Whether the palette is currently visible.
 visible: bool = false,
 
@@ -147,6 +150,7 @@ pub fn create(alloc: Allocator, window: *Window) !*CommandPalette {
         .container = container,
         .search_entry = search_entry,
         .list_box = list_box,
+        .scrolled_window = scrolled,
         .window = window,
         .alloc = alloc,
     };
@@ -171,7 +175,17 @@ pub fn create(alloc: Allocator, window: *Window) !*CommandPalette {
         0,
     );
 
-    // Connect key-pressed on search entry for Enter/Escape
+    // Connect activate signal on search entry for Enter key execution
+    _ = c.g_signal_connect_data(
+        @as(c.gpointer, @ptrCast(search_entry)),
+        "activate",
+        @as(c.GCallback, @ptrCast(&onActivate)),
+        @ptrCast(self),
+        null,
+        0,
+    );
+
+    // Connect key-pressed on search entry for Escape and arrow keys
     const key_controller = c.gtk_event_controller_key_new();
     _ = c.g_signal_connect_data(
         @as(c.gpointer, @ptrCast(key_controller)),
@@ -253,6 +267,32 @@ pub fn getActions() []const Action {
 // ------------------------------------------------------------------
 // Internal
 // ------------------------------------------------------------------
+
+/// Scroll the scrolled window so that the given row is visible.
+fn scrollRowIntoView(self: *CommandPalette, row: *c.GtkListBoxRow) void {
+    const adj = c.gtk_scrolled_window_get_vadjustment(self.scrolled_window) orelse return;
+
+    // Compute the row's position relative to the list box using graphene point transform.
+    var row_point = c.graphene_point_t{ .x = 0, .y = 0 };
+    var list_point: c.graphene_point_t = undefined;
+    if (c.gtk_widget_compute_point(asWidget(row), asWidget(self.list_box), &row_point, &list_point) == 0)
+        return;
+
+    const row_y: f64 = @floatCast(list_point.y);
+    const row_height: f64 = @floatFromInt(c.gtk_widget_get_height(asWidget(row)));
+    const visible_top = c.gtk_adjustment_get_value(adj);
+    const page_size = c.gtk_adjustment_get_page_size(adj);
+    const visible_bottom = visible_top + page_size;
+
+    // Scroll down if the row extends below the visible area
+    if (row_y + row_height > visible_bottom) {
+        c.gtk_adjustment_set_value(adj, row_y + row_height - page_size);
+    }
+    // Scroll up if the row is above the visible area
+    else if (row_y < visible_top) {
+        c.gtk_adjustment_set_value(adj, row_y);
+    }
+}
 
 fn populateResults(self: *CommandPalette, query: []const u8) void {
     // Remove all existing rows
@@ -404,6 +444,14 @@ fn onRowActivated(
     }
 }
 
+fn onActivate(
+    _: *c.GtkSearchEntry,
+    userdata: c.gpointer,
+) callconv(.c) void {
+    const self: *CommandPalette = @ptrCast(@alignCast(userdata));
+    self.executeSelectedAction();
+}
+
 fn onSearchChanged(
     _: *c.GtkSearchEntry,
     userdata: c.gpointer,
@@ -431,11 +479,6 @@ fn onKeyPressed(
         return 1;
     }
 
-    if (keyval == c.GDK_KEY_Return) {
-        self.executeSelectedAction();
-        return 1;
-    }
-
     // Arrow down: move selection in list box
     if (keyval == c.GDK_KEY_Down) {
         const selected = c.gtk_list_box_get_selected_row(self.list_box);
@@ -444,6 +487,7 @@ fn onKeyPressed(
             const next = c.gtk_list_box_get_row_at_index(self.list_box, idx + 1);
             if (next) |n| {
                 c.gtk_list_box_select_row(self.list_box, n);
+                self.scrollRowIntoView(n);
             }
         }
         return 1;
@@ -458,6 +502,7 @@ fn onKeyPressed(
                 const prev = c.gtk_list_box_get_row_at_index(self.list_box, idx - 1);
                 if (prev) |p| {
                     c.gtk_list_box_select_row(self.list_box, p);
+                    self.scrollRowIntoView(p);
                 }
             }
         }

@@ -93,6 +93,18 @@ pub const gtk_list_box_row_get_index = raw.gtk_list_box_row_get_index;
 pub const gtk_scrolled_window_new = raw.gtk_scrolled_window_new;
 pub const gtk_scrolled_window_set_child = raw.gtk_scrolled_window_set_child;
 pub const gtk_scrolled_window_set_policy = raw.gtk_scrolled_window_set_policy;
+pub const gtk_scrolled_window_get_vadjustment = raw.gtk_scrolled_window_get_vadjustment;
+
+// GtkAdjustment
+pub const gtk_adjustment_get_value = raw.gtk_adjustment_get_value;
+pub const gtk_adjustment_set_value = raw.gtk_adjustment_set_value;
+pub const gtk_adjustment_get_page_size = raw.gtk_adjustment_get_page_size;
+
+// Graphene (bundled with GTK4)
+pub const graphene_point_t = raw.graphene_point_t;
+
+// Widget coordinate transform
+pub const gtk_widget_compute_point = raw.gtk_widget_compute_point;
 pub const gtk_separator_new = raw.gtk_separator_new;
 pub const gtk_label_set_text = raw.gtk_label_set_text;
 pub const gtk_label_set_xalign = raw.gtk_label_set_xalign;

@@ -131,7 +131,7 @@ pub fn hide(self: *SearchOverlay) void {
 
     // Tell Ghostty to end search
     if (self.current_surface) |surface| {
-        _ = c.ghostty_surface_binding_action(surface, "search:close", "search:close".len);
+        _ = c.ghostty_surface_binding_action(surface, "end_search", "end_search".len);
     }
     self.current_surface = null;
 }
@@ -173,24 +173,24 @@ fn sendSearchText(self: *SearchOverlay) void {
     const text = std.mem.span(text_ptr.?);
 
     if (text.len == 0) {
-        _ = c.ghostty_surface_binding_action(surface, "search:close", "search:close".len);
+        _ = c.ghostty_surface_binding_action(surface, "end_search", "end_search".len);
         return;
     }
 
-    // Build "search:forward:<text>" command
+    // Build "search:<text>" command — Ghostty's binding action format
     var cmd_buf: [1024]u8 = undefined;
-    const cmd = std.fmt.bufPrint(&cmd_buf, "search:forward:{s}", .{text}) catch return;
+    const cmd = std.fmt.bufPrint(&cmd_buf, "search:{s}", .{text}) catch return;
     _ = c.ghostty_surface_binding_action(surface, cmd.ptr, cmd.len);
 }
 
 fn nextMatch(self: *SearchOverlay) void {
     const surface = self.current_surface orelse return;
-    _ = c.ghostty_surface_binding_action(surface, "search:next", "search:next".len);
+    _ = c.ghostty_surface_binding_action(surface, "navigate_search:next", "navigate_search:next".len);
 }
 
 fn prevMatch(self: *SearchOverlay) void {
     const surface = self.current_surface orelse return;
-    _ = c.ghostty_surface_binding_action(surface, "search:prev", "search:prev".len);
+    _ = c.ghostty_surface_binding_action(surface, "navigate_search:previous", "navigate_search:previous".len);
 }
 
 // ------------------------------------------------------------------

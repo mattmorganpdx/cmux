@@ -76,6 +76,10 @@ So this roadmap is written from the perspective of an AI agent who is both the b
 - [x] Sidebar workspace click stealing keyboard focus from terminal — made GtkListBox non-focusable and reordered syncSelection before terminal focus in switchWorkspace
 - [x] Workspace switching destroys terminal sessions — `gtk_box_remove` triggered GTK4 unrealize cascade, killing Ghostty surfaces. Replaced `GtkBox` content area with `GtkStack` so switching workspaces just flips visibility; all terminals stay realized with GL contexts and shell sessions intact
 - [x] Only one workspace can have terminals (GTK-CRITICAL `gtk_box_append` assertion) — each PaneTree had its own node ID counter starting at 1, causing collisions in Window's global widget maps. Added a shared `next_node_id` counter in TabManager so node IDs are unique across all workspaces
+- [x] Command palette click not executing actions — missing `row-activated` signal connection on GtkListBox
+- [x] Command palette Enter not executing actions — `GtkSearchEntry` consumes Return key internally, so key event controller never saw it. Connected to the `activate` signal on the search entry instead
+- [x] Command palette arrow keys not scrolling list — added `scrollRowIntoView` using `gtk_widget_compute_point` and `GtkAdjustment` to keep selected row visible
+- [x] Terminal search not working — Ghostty binding action names were wrong (`search:forward:text` → `search:text`, `search:close` → `end_search`, `search:next` → `navigate_search:next`, `search:prev` → `navigate_search:previous`)
 
 ---
 
@@ -162,7 +166,7 @@ All power features are implemented and working. Total API methods: 41.
 
 - [x] **Workspace colors** — 8-color accent palette (red, blue, green, yellow, purple, orange, pink, cyan). Sidebar rows show a 4px colored accent bar. Persisted in session. Set via `workspace.set_color`.
 
-- [x] **Command palette** — GtkSearchEntry + GtkListBox overlay with 11 registered actions. Case-insensitive substring fuzzy matching. Arrow key navigation, Enter to execute, Escape to dismiss. Ctrl+Shift+P shortcut. Socket API: `command_palette.list`, `command_palette.execute`.
+- [x] **Command palette** — GtkSearchEntry + GtkListBox overlay with 12 registered actions. Case-insensitive substring fuzzy matching. Arrow key navigation, Enter to execute, click to execute, Escape to dismiss. Each row shows the keyboard shortcut right-aligned. Ctrl+Shift+P shortcut. Socket API: `command_palette.list`, `command_palette.execute`.
 
 - [x] **Terminal find/search** — Search overlay with GtkSearchEntry + match count label + close button. Integrates with Ghostty's search API (`search:forward`, `search:next`, `search:prev`, `search:close`). Match count updated via action callbacks. Ctrl+Shift+F shortcut. Socket API: `surface.search`.
 
