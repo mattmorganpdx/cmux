@@ -17,7 +17,7 @@ const usage_text =
     \\  surface       Surface management (list, current, search, read-text, send-key, split, close)
     \\  pane          Pane management (list, break, join, resize, swap)
     \\  window        Window management (list, current)
-    \\  send          Send text to a surface
+    \\  send          Send text to a surface (--surface <id>, --enter)
     \\  notification  Notification management (create, list, clear)
     \\  palette       Command palette (list, execute)
     \\  claude-hook   Claude Code integration (session-start, stop, notification, prompt-submit)
@@ -332,26 +332,40 @@ pub fn main() !void {
                 "{}";
             try sendAndPrint(socket_path, "surface.read_text", params, stdout, stderr);
         } else if (std.mem.eql(u8, sub, "send-key")) {
-            // cmux surface send-key <key> [surface_id]
-            const key = args.next() orelse {
-                try stderr.writeAll("Usage: cmux surface send-key <key> [surface_id]\n");
+            // cmux surface send-key [--surface <id>] <key>
+            var surface_id: ?[]const u8 = null;
+            var key: ?[]const u8 = null;
+            while (args.next()) |arg| {
+                if (std.mem.eql(u8, arg, "--surface")) {
+                    surface_id = args.next() orelse {
+                        try stderr.writeAll("--surface requires a surface ID\n");
+                        return;
+                    };
+                } else if (arg.len > 2 and arg[0] == '-' and arg[1] == '-') {
+                    try stderr.writeAll("Unknown flag: ");
+                    try stderr.writeAll(arg);
+                    try stderr.writeAll("\nUsage: cmux surface send-key [--surface <id>] <key>\n");
+                    return;
+                } else {
+                    key = arg;
+                }
+            }
+            const key_name = key orelse {
+                try stderr.writeAll("Usage: cmux surface send-key [--surface <id>] <key>\n");
                 return;
             };
-            if (args.next()) |sid| {
-                var params_buf: [256]u8 = undefined;
-                const params = std.fmt.bufPrint(&params_buf, "{{\"key\":\"{s}\",\"surface_id\":{s}}}", .{ key, sid }) catch {
+            var params_buf: [256]u8 = undefined;
+            const params = if (surface_id) |sid|
+                std.fmt.bufPrint(&params_buf, "{{\"key\":\"{s}\",\"surface_id\":{s}}}", .{ key_name, sid }) catch {
+                    try stderr.writeAll("Params too long\n");
+                    return;
+                }
+            else
+                std.fmt.bufPrint(&params_buf, "{{\"key\":\"{s}\"}}", .{key_name}) catch {
                     try stderr.writeAll("Params too long\n");
                     return;
                 };
-                try sendAndPrint(socket_path, "surface.send_key", params, stdout, stderr);
-            } else {
-                var params_buf: [256]u8 = undefined;
-                const params = std.fmt.bufPrint(&params_buf, "{{\"key\":\"{s}\"}}", .{key}) catch {
-                    try stderr.writeAll("Params too long\n");
-                    return;
-                };
-                try sendAndPrint(socket_path, "surface.send_key", params, stdout, stderr);
-            }
+            try sendAndPrint(socket_path, "surface.send_key", params, stdout, stderr);
         } else if (std.mem.eql(u8, sub, "split")) {
             // cmux surface split <direction>
             const direction = args.next() orelse {
@@ -445,16 +459,45 @@ pub fn main() !void {
             try stderr.writeAll("Unknown pane subcommand. Use: list, break, join, resize, swap\n");
         }
     } else if (std.mem.eql(u8, subcommand, "send")) {
-        const text = args.next() orelse {
-            try stderr.writeAll("Usage: cmux send <text>\n");
+        // cmux send [--surface <id>] [--enter] <text>
+        var surface_id: ?[]const u8 = null;
+        var append_enter = false;
+        var text: ?[]const u8 = null;
+        while (args.next()) |arg| {
+            if (std.mem.eql(u8, arg, "--surface")) {
+                surface_id = args.next() orelse {
+                    try stderr.writeAll("--surface requires a surface ID\n");
+                    return;
+                };
+            } else if (std.mem.eql(u8, arg, "--enter")) {
+                append_enter = true;
+            } else if (arg.len > 2 and arg[0] == '-' and arg[1] == '-') {
+                try stderr.writeAll("Unknown flag: ");
+                try stderr.writeAll(arg);
+                try stderr.writeAll("\nUsage: cmux send [--surface <id>] [--enter] <text>\n");
+                return;
+            } else {
+                text = arg;
+            }
+        }
+        const send_text = text orelse {
+            try stderr.writeAll("Usage: cmux send [--surface <id>] [--enter] <text>\n");
             return;
         };
-        // Build params JSON with escaped text
-        var params_buf: [4096]u8 = undefined;
-        const params = std.fmt.bufPrint(&params_buf, "{{\"text\":\"{s}\"}}", .{text}) catch {
-            try stderr.writeAll("Text too long\n");
-            return;
-        };
+        // Build params JSON with properly escaped text
+        var params_buf: [8192]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&params_buf);
+        const writer = fbs.writer();
+        try writer.writeAll("{\"text\":\"");
+        try writeJsonEscaped(writer, send_text);
+        if (append_enter) try writer.writeAll("\\n");
+        try writer.writeByte('"');
+        if (surface_id) |sid| {
+            try writer.writeAll(",\"surface_id\":");
+            try writer.writeAll(sid);
+        }
+        try writer.writeByte('}');
+        const params = fbs.getWritten();
         try sendAndPrint(socket_path, "surface.send_text", params, stdout, stderr);
     } else if (std.mem.eql(u8, subcommand, "window")) {
         const sub = args.next() orelse "list";

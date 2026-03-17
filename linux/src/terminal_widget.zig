@@ -324,6 +324,15 @@ fn onUnrealize(_: *c.GtkGLArea, userdata: c.gpointer) callconv(.c) void {
     // Mark as unrealized to prevent further queueRender calls
     self.realized = false;
 
+    // Remove from the surface registry immediately so that Ghostty render
+    // callbacks on other threads can no longer look up this widget via
+    // fromSurface(). Without this, there is a race between unrealize
+    // (GTK main thread) and the render action callback (Ghostty thread)
+    // that can call gtk_gl_area_queue_render on a destroyed widget.
+    if (self.surface != null) {
+        _ = surface_registry.remove(@intFromPtr(self.surface));
+    }
+
     log.info("Terminal surface unrealized", .{});
 }
 

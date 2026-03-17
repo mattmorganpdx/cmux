@@ -83,6 +83,29 @@ So this roadmap is written from the perspective of an AI agent who is both the b
 - [x] Keyboard focus lost after closing command palette or search overlay — GTK doesn't auto-refocus when a focused widget is hidden. Added `Window.focusCurrentTerminal()` and call it from both `CommandPalette.hide()` and `SearchOverlay.hide()`
 - [x] Scroll wheel inverted in terminal — GTK4 scroll `dy` convention is opposite to Ghostty's; negated `dy` before passing to `ghostty_surface_mouse_scroll`
 
+- [x] Use-after-unrealize crash in queueRender — Ghostty render thread could call `fromSurface()` and find a widget still in the registry after `onUnrealize` but before `deinit`. Race between GTK main thread setting `realized=false` and Ghostty thread reading it. Fixed by removing surface from `surface_registry` in `onUnrealize` so `fromSurface()` returns null immediately.
+
+### Dogfooding Defects (2026-03-16)
+
+These were discovered during real agent use of cmux-cli:
+
+- [x] **`send` has no surface targeting** — `cmux-cli send` only accepts `<text>`, no `--surface` flag. Must change focus first, which has side effects. Both `send` and `surface send-key` should support `--surface <id>`. Fixed: added `--surface <id>` to both commands.
+- [x] **`send` silently treats flags as text** — `cmux-cli send --surface 11 --text 'ssh myec2'` sends literal `--surface` as text instead of erroring. Unrecognized flags should produce an error. Fixed: unknown `--` flags now produce an error.
+- [x] **`send` with embedded newlines fails to parse** — `cmux-cli send 'ssh myec2\n'` returns "Failed to parse request". Should handle `\n` escape sequences or add `--enter` flag. Fixed: added `--enter` flag, and text is now properly JSON-escaped via `writeJsonEscaped`.
+- [x] **`send` routed to dead surface** — `send` returned a dead surface ID in an inactive workspace. Should never route to dead/inactive surfaces; should target focused alive surface or error. Fixed: server now checks `tw.realized` in addition to `tw.surface != null`.
+- [x] **`surface send-key` lacks surface targeting** — Same as send; always goes to focused surface with no `--surface <id>` option. Fixed: added `--surface <id>` flag with unknown flag rejection.
+- [x] **Inconsistent API between subcommands** — `surface read-text` accepts surface ID for targeting, but `send` and `surface send-key` do not. All surface-interacting commands should support explicit surface targeting. Fixed: all three commands now support `--surface <id>`.
+
+### Dogfooding Defects (2026-03-17)
+
+Discovered during an agent SSH session into an EC2 instance via cmux-cli:
+
+- [x] **`workspace select` doesn't stick for `send`** — After `workspace select 5`, `cmux-cli send` still routed to a surface in a different workspace (surface 16, dead). The workspace selection didn't reliably update which surface `send` targets. Fixed: `workspace.select` (and `next`/`previous`/`last`) now uses synchronous dispatch via `std.Thread.ResetEvent` — the handler blocks until the GTK main thread completes the switch, so subsequent commands see the updated workspace.
+- [x] **`send` result reports wrong surface** — `cmux-cli send` returned `"surface_id": 16` (a dead surface in workspace 3) even though workspace 5 was selected. Fixed: synchronous workspace switch ensures `selectedWorkspace()` returns the correct workspace, and dead surface check (`tw.realized`) rejects unrealized surfaces with a `dead_surface` error.
+- [x] **`surface send-key` ignores workspace context** — After selecting workspace 5, `surface send-key Enter` sent to surface 2 (workspace 4) instead of surface 11 (workspace 5). Fixed: same synchronous workspace switch fix, plus dead surface guard on `send_key` handler.
+- [x] **No `--enter` flag on `send` for convenience** — Sending a command requires two calls (`send` + `send-key Enter`). Fixed: `--enter` flag appends `\n` to the text payload, which is properly JSON-escaped via `writeJsonEscaped` and interpreted as Enter by the PTY via `encodeBindingActionText`.
+- [x] **`send` usage text is misleading** — `cmux-cli send` prints `Usage: cmux send <text>` with no mention of `--surface` or `--enter` flags. Fixed: usage text now shows `Send text to a surface (--surface <id>, --enter)` and error messages include the full flag syntax.
+
 ---
 
 ## The Dogfooding Roadmap

@@ -580,7 +580,9 @@ fn handleWorkspaceSelect(alloc: Allocator, server: *Server, req: *const protocol
 
     const idx = target_index.?;
 
-    // Schedule the workspace switch on the GTK main thread
+    // Dispatch workspace switch to GTK main thread and block until complete.
+    // This ensures subsequent socket commands (send, send-key) see the
+    // updated workspace and target the correct surface.
     const ctx = std.heap.c_allocator.create(WorkspaceSwitchCtx) catch {
         return protocol.errorResponse(alloc, req.id, "internal_error", "Failed to allocate context");
     };
@@ -590,7 +592,17 @@ fn handleWorkspaceSelect(alloc: Allocator, server: *Server, req: *const protocol
     };
     _ = c.g_idle_add(&doWorkspaceSwitch, @ptrCast(ctx));
 
-    // Return the workspace that will be selected
+    // Block until the GTK main thread completes the switch
+    ctx.done.wait();
+
+    const success = ctx.success;
+    std.heap.c_allocator.destroy(ctx);
+
+    if (!success) {
+        return protocol.errorResponse(alloc, req.id, "switch_failed", "Failed to switch workspace");
+    }
+
+    // Return the now-selected workspace
     const ws = window.tab_manager.workspaces.items[idx];
     const ws_json = try workspaceToJson(alloc, ws, true, idx);
     defer alloc.free(ws_json);
@@ -605,15 +617,20 @@ fn handleWorkspaceSelect(alloc: Allocator, server: *Server, req: *const protocol
 const WorkspaceSwitchCtx = struct {
     window: *Window,
     index: usize,
+    success: bool = false,
+    done: std.Thread.ResetEvent = .{},
 };
 
 fn doWorkspaceSwitch(userdata: c.gpointer) callconv(.c) c.gboolean {
     const ctx: *WorkspaceSwitchCtx = @ptrCast(@alignCast(userdata));
-    defer std.heap.c_allocator.destroy(ctx);
+    // Do NOT defer destroy — the handler thread still needs ctx
+    defer ctx.done.set();
 
     ctx.window.switchWorkspace(ctx.index) catch |err| {
         log.warn("Failed to switch workspace from socket: {}", .{err});
+        return c.G_SOURCE_REMOVE;
     };
+    ctx.success = true;
 
     return c.G_SOURCE_REMOVE;
 }
@@ -1018,8 +1035,8 @@ fn handleSurfaceSendText(alloc: Allocator, server: *Server, req: *const protocol
         return protocol.errorResponse(alloc, req.id, "no_surface", "Surface widget not found");
     };
 
-    if (tw.surface == null) {
-        return protocol.errorResponse(alloc, req.id, "no_surface", "Surface not initialized");
+    if (tw.surface == null or !tw.realized) {
+        return protocol.errorResponse(alloc, req.id, "dead_surface", "Surface is not active (unrealized or uninitialized)");
     }
 
     // Use ghostty_surface_binding_action with "text:" prefix to write directly
@@ -1267,8 +1284,8 @@ fn handleSurfaceSendKey(alloc: Allocator, server: *Server, req: *const protocol.
         return protocol.errorResponse(alloc, req.id, "no_surface", "Surface widget not found");
     };
 
-    if (tw.surface == null) {
-        return protocol.errorResponse(alloc, req.id, "no_surface", "Surface not initialized");
+    if (tw.surface == null or !tw.realized) {
+        return protocol.errorResponse(alloc, req.id, "dead_surface", "Surface is not active (unrealized or uninitialized)");
     }
 
     const action_bytes = resolveKeyAction(alloc, key) orelse {
@@ -1533,6 +1550,14 @@ fn handleWorkspaceNext(alloc: Allocator, server: *Server, req: *const protocol.R
     };
     ctx.* = .{ .window = window, .index = next_idx };
     _ = c.g_idle_add(&doWorkspaceSwitch, @ptrCast(ctx));
+    ctx.done.wait();
+
+    const success = ctx.success;
+    std.heap.c_allocator.destroy(ctx);
+
+    if (!success) {
+        return protocol.errorResponse(alloc, req.id, "switch_failed", "Failed to switch workspace");
+    }
 
     const ws = tm.workspaces.items[next_idx];
     const ws_json = try workspaceToJson(alloc, ws, true, next_idx);
@@ -1564,6 +1589,14 @@ fn handleWorkspacePrevious(alloc: Allocator, server: *Server, req: *const protoc
     };
     ctx.* = .{ .window = window, .index = prev_idx };
     _ = c.g_idle_add(&doWorkspaceSwitch, @ptrCast(ctx));
+    ctx.done.wait();
+
+    const success = ctx.success;
+    std.heap.c_allocator.destroy(ctx);
+
+    if (!success) {
+        return protocol.errorResponse(alloc, req.id, "switch_failed", "Failed to switch workspace");
+    }
 
     const ws = tm.workspaces.items[prev_idx];
     const ws_json = try workspaceToJson(alloc, ws, true, prev_idx);
@@ -1605,6 +1638,14 @@ fn handleWorkspaceLast(alloc: Allocator, server: *Server, req: *const protocol.R
     };
     ctx.* = .{ .window = window, .index = idx };
     _ = c.g_idle_add(&doWorkspaceSwitch, @ptrCast(ctx));
+    ctx.done.wait();
+
+    const success = ctx.success;
+    std.heap.c_allocator.destroy(ctx);
+
+    if (!success) {
+        return protocol.errorResponse(alloc, req.id, "switch_failed", "Failed to switch workspace");
+    }
 
     const ws = tm.workspaces.items[idx];
     const ws_json = try workspaceToJson(alloc, ws, true, idx);

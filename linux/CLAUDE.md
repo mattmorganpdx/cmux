@@ -19,7 +19,13 @@ When cmux is running, prefer using `cmux-cli` to interact with terminal sessions
 
 ```bash
 # Send a command to the focused terminal pane
-cmux-cli send "zig build 2>&1\n"
+cmux-cli send --enter "zig build 2>&1"
+
+# Send text with explicit Enter appended
+cmux-cli send --enter "ls -la"
+
+# Send to a specific surface by ID
+cmux-cli send --surface 3 --enter "cd /tmp"
 
 # Read the terminal output (viewport only)
 cmux-cli surface read-text
@@ -33,7 +39,7 @@ cmux-cli surface send-key enter
 
 # Target a specific surface by ID
 cmux-cli surface read-text 3 --scrollback
-cmux-cli send "ls\n"   # sends to focused pane
+cmux-cli surface send-key --surface 3 enter
 ```
 
 ### Parallel work with splits
