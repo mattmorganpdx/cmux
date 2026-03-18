@@ -1666,6 +1666,10 @@ const PaneResizeCtx = struct {
     pane_id: PaneTree.NodeId,
     direction: PaneTree.SplitDirection,
     delta: f64,
+    success: bool = false,
+    err_code: []const u8 = "internal_error",
+    err_msg: []const u8 = "Unknown error",
+    done: std.Thread.ResetEvent = .{},
 };
 
 fn handlePaneResize(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
@@ -1699,22 +1703,42 @@ fn handlePaneResize(alloc: Allocator, server: *Server, req: *const protocol.Requ
     };
     _ = c.g_idle_add(&doPaneResize, @ptrCast(ctx));
 
-    return protocol.successResponse(alloc, req.id, "{\"resized\":true}");
+    // Block until the main thread callback completes
+    ctx.done.wait();
+
+    const success = ctx.success;
+    const err_code = ctx.err_code;
+    const err_msg = ctx.err_msg;
+    std.heap.c_allocator.destroy(ctx);
+
+    if (success) {
+        return protocol.successResponse(alloc, req.id, "{\"resized\":true}");
+    } else {
+        return protocol.errorResponse(alloc, req.id, err_code, err_msg);
+    }
 }
 
 fn doPaneResize(userdata: c.gpointer) callconv(.c) c.gboolean {
     const ctx: *PaneResizeCtx = @ptrCast(@alignCast(userdata));
-    defer std.heap.c_allocator.destroy(ctx);
+    // Do NOT defer destroy — the handler thread still needs ctx
+    defer ctx.done.set();
 
-    const ws = ctx.window.tab_manager.selectedWorkspace() orelse return c.G_SOURCE_REMOVE;
+    const ws = ctx.window.tab_manager.selectedWorkspace() orelse {
+        ctx.err_code = "no_workspace";
+        ctx.err_msg = "No workspace selected";
+        return c.G_SOURCE_REMOVE;
+    };
 
     ws.pane_tree.resize(ctx.pane_id, ctx.direction, ctx.delta) catch |err| {
         log.warn("Failed to resize pane {d}: {}", .{ ctx.pane_id, err });
+        ctx.err_code = "not_found";
+        ctx.err_msg = "Pane not found or cannot resize";
         return c.G_SOURCE_REMOVE;
     };
 
     // Sync GTK widget positions to match updated data model
     ctx.window.syncDividerPositions(ws);
+    ctx.success = true;
 
     return c.G_SOURCE_REMOVE;
 }
@@ -1845,22 +1869,59 @@ fn handlePaneJoin(alloc: Allocator, server: *Server, req: *const protocol.Reques
     };
     _ = c.g_idle_add(&doPaneJoin, @ptrCast(ctx));
 
-    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+    // Block until the main thread callback completes
+    ctx.done.wait();
+
+    const success = ctx.success;
+    const err_code = ctx.err_code;
+    const err_msg = ctx.err_msg;
+    std.heap.c_allocator.destroy(ctx);
+
+    if (success) {
+        return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+    } else {
+        return protocol.errorResponse(alloc, req.id, err_code, err_msg);
+    }
 }
 
 const PaneJoinCtx = struct {
     window: *Window,
     pane_id: PaneTree.NodeId,
     workspace_id: Workspace.WorkspaceId,
+    success: bool = false,
+    err_code: []const u8 = "internal_error",
+    err_msg: []const u8 = "Unknown error",
+    done: std.Thread.ResetEvent = .{},
 };
 
 fn doPaneJoin(userdata: c.gpointer) callconv(.c) c.gboolean {
     const ctx: *PaneJoinCtx = @ptrCast(@alignCast(userdata));
-    defer std.heap.c_allocator.destroy(ctx);
+    // Do NOT defer destroy — the handler thread still needs ctx
+    defer ctx.done.set();
 
     ctx.window.joinPaneToWorkspace(ctx.pane_id, ctx.workspace_id) catch |err| {
+        switch (err) {
+            error.PaneNotFound => {
+                ctx.err_code = "not_found";
+                ctx.err_msg = "Pane not found";
+            },
+            error.WorkspaceNotFound => {
+                ctx.err_code = "not_found";
+                ctx.err_msg = "Workspace not found";
+            },
+            error.SameWorkspace => {
+                ctx.err_code = "invalid_param";
+                ctx.err_msg = "Pane is already in that workspace";
+            },
+            else => {
+                ctx.err_code = "internal_error";
+                ctx.err_msg = "Failed to join pane";
+            },
+        }
         log.warn("Failed to join pane: {}", .{err});
+        return c.G_SOURCE_REMOVE;
     };
+    ctx.success = true;
 
     return c.G_SOURCE_REMOVE;
 }

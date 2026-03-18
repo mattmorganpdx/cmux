@@ -111,16 +111,26 @@ pub fn main() !void {
             };
             try sendAndPrint(socket_path, "workspace.close", params, stdout, stderr);
         } else if (std.mem.eql(u8, sub, "rename")) {
-            const new_title = args.next() orelse {
-                try stderr.writeAll("Usage: cmux workspace rename <title>\n");
+            // cmux workspace rename [<id>] <title>
+            const rename_arg1 = args.next() orelse {
+                try stderr.writeAll("Usage: cmux workspace rename [<id>] <title>\n");
                 return;
             };
+            // If there's a second arg, rename_arg1 is the ID and second is the title
             var params_buf: [4096]u8 = undefined;
-            const params = std.fmt.bufPrint(&params_buf, "{{\"title\":\"{s}\"}}", .{new_title}) catch {
-                try stderr.writeAll("Title too long\n");
-                return;
-            };
-            try sendAndPrint(socket_path, "workspace.rename", params, stdout, stderr);
+            if (args.next()) |rename_title| {
+                const params = std.fmt.bufPrint(&params_buf, "{{\"id\":{s},\"title\":\"{s}\"}}", .{ rename_arg1, rename_title }) catch {
+                    try stderr.writeAll("Title too long\n");
+                    return;
+                };
+                try sendAndPrint(socket_path, "workspace.rename", params, stdout, stderr);
+            } else {
+                const params = std.fmt.bufPrint(&params_buf, "{{\"title\":\"{s}\"}}", .{rename_arg1}) catch {
+                    try stderr.writeAll("Title too long\n");
+                    return;
+                };
+                try sendAndPrint(socket_path, "workspace.rename", params, stdout, stderr);
+            }
         } else if (std.mem.eql(u8, sub, "report-git")) {
             // cmux workspace report-git <id> <branch> [--dirty]
             const id_str = args.next() orelse {

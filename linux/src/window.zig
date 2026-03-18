@@ -803,11 +803,15 @@ pub fn joinPaneToWorkspace(self: *Window, pane_id: PaneTree.NodeId, target_ws_id
     const target = target_ws orelse return error.WorkspaceNotFound;
     if (source.id == target.id) return error.SameWorkspace;
 
-    // Can't move the only pane
-    if (source.pane_tree.paneCount() <= 1) return error.LastPane;
+    const source_is_last_pane = source.pane_tree.paneCount() <= 1;
 
-    // Detach from source tree
-    _ = try source.pane_tree.detachPane(pane_id);
+    if (source_is_last_pane) {
+        // Last pane — clear the source tree root instead of detaching
+        source.pane_tree.root = null;
+    } else {
+        // Detach from source tree (sibling promotion)
+        _ = try source.pane_tree.detachPane(pane_id);
+    }
 
     // Attach to target tree
     if (target.pane_tree.root) |root_id| {
@@ -845,6 +849,12 @@ pub fn joinPaneToWorkspace(self: *Window, pane_id: PaneTree.NodeId, target_ws_id
     // Update the terminal's workspace ID
     if (self.pane_widgets.get(pane_id)) |tw| {
         tw.workspace_id = target.id;
+    }
+
+    // If the source workspace is now empty, close it
+    if (source_is_last_pane) {
+        const source_id = source.id;
+        _ = self.closeWorkspaceById(source_id);
     }
 
     // Rebuild current workspace if source is selected

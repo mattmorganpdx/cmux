@@ -85,6 +85,13 @@ cmux-cli surface list     # list all surfaces with IDs
 cmux-cli pane list        # list all panes
 ```
 
+### Command palette
+
+```bash
+cmux-cli palette list                  # list all available actions
+cmux-cli palette execute <action>      # execute an action by name
+```
+
 ### Claude Code integration
 
 When the `Resources/bin/claude` wrapper is in PATH before the real `claude` binary, it automatically injects hooks so Claude Code sessions report status to the cmux sidebar.

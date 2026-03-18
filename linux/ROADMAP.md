@@ -106,6 +106,66 @@ Discovered during an agent SSH session into an EC2 instance via cmux-cli:
 - [x] **No `--enter` flag on `send` for convenience** — Sending a command requires two calls (`send` + `send-key Enter`). Fixed: `--enter` flag appends `\n` to the text payload, which is properly JSON-escaped via `writeJsonEscaped` and interpreted as Enter by the PTY via `encodeBindingActionText`.
 - [x] **`send` usage text is misleading** — `cmux-cli send` prints `Usage: cmux send <text>` with no mention of `--surface` or `--enter` flags. Fixed: usage text now shows `Send text to a surface (--surface <id>, --enter)` and error messages include the full flag syntax.
 
+### Dogfooding Defects (2026-03-18)
+
+Discovered during systematic CLI test suite (all 41 commands exercised):
+
+- [x] **`workspace rename` CLI doesn't accept workspace ID** — `cmux-cli workspace rename 8 "New Title"` treated `"8"` as the title. Fixed: CLI now accepts `cmux workspace rename [<id>] <title>` — if two args provided, first is workspace ID and second is title.
+- [x] **`pane.join` returns success before execution** — Used async `g_idle_add` and returned `{"ok":true}` immediately. Fixed: uses synchronous dispatch via `std.Thread.ResetEvent` like `workspace.select`. Returns real error codes (`not_found`, `invalid_param`) on failure.
+- [x] **`pane.join` can't undo a `pane.break`** — `joinPaneToWorkspace` had a `LastPane` guard preventing moving the sole pane. Fixed: when the source workspace has only one pane, the pane tree root is cleared and the empty source workspace is automatically closed.
+- [x] **`pane resize` returns success for non-existent panes** — `cmux-cli pane resize 999 right` returned `{"resized":true}`. Fixed: uses synchronous dispatch via `std.Thread.ResetEvent`. Returns `not_found` error if the pane doesn't exist or can't be resized.
+- [x] **CLAUDE.md documents wrong CLI subcommand name for command palette** — Fixed: added correct `palette list` / `palette execute` commands to CLAUDE.md.
+
+### Enhancements (2026-03-18)
+
+Identified during CLI test suite:
+
+- [ ] **Synchronous dispatch for remaining mutating socket operations** — `pane.break`, `pane.swap`, `surface.split`, and `surface.close` still use async `g_idle_add` and return success before GTK executes. The `ResetEvent` pattern (now proven in `workspace.select`, `pane.join`, and `pane.resize`) should be applied to these remaining handlers so clients get real success/error responses.
+- [ ] **`workspace next`/`previous` should optionally wrap around** — Currently returns `at_end`/`at_start` errors. For agent use, wrapping (or a `--wrap` flag) would be more convenient than requiring the agent to handle the error and call `workspace select`.
+- [ ] **Use `jq` instead of Python for JSON parsing in agent workflows** — When parsing `cmux-cli` JSON output in shell pipelines, prefer `jq` (lightweight, purpose-built) over `python3 -c "import json..."`. Example: `cmux-cli surface read-text | jq -r '.result.text'` instead of piping through Python. `jq` should be a recommended dependency for agent environments.
+
+### Claude Code Bash Hook — Route Interactive Commands Through cmux
+
+**Problem:** Claude Code's Bash tool is synchronous and blocking. When a command prompts for input (TUI, confirmation dialog, SSH passphrase), the agent is stuck waiting for the process to exit. But when the agent uses `cmux-cli send` + `cmux-cli surface read-text`, it can observe and interact with any process asynchronously — including TUIs, interactive prompts, and long-running builds.
+
+Currently the agent has to *remember* to use cmux-cli instead of Bash. A Claude Code `PreToolUse` hook can enforce this automatically.
+
+**Design:**
+
+The hook is a shell script triggered by Claude Code's `PreToolUse` event on the `Bash` tool. It receives the planned command as JSON on stdin and can block it (exit 2), allow it (exit 0), or rewrite it (JSON output with `updatedInput`).
+
+**Phase 1: Blocking hook (guide the agent)**
+- [ ] Only activates when `CMUX_SURFACE_ID` is set (agent is running inside cmux)
+- [ ] Pattern-match commands that are known to be interactive or long-running: `ssh`, `apt`, `zig build`, `cargo build`, `npm install`, `make`, `docker`, `sudo`, interactive shells, etc.
+- [ ] Block with exit 2 and a message like: `"This command may be interactive. Use cmux-cli send --enter '<command>' then cmux-cli surface read-text to check output."`
+- [ ] Allow short/safe commands through: `git`, `ls`, `cat`, `echo`, `which`, `jq`, `cmux-cli`, `cd`, `pwd`, file reads, etc.
+- [ ] Configure in `.claude/settings.json` or `.claude/settings.local.json` under `hooks.PreToolUse` with `matcher: "Bash"`
+
+**Phase 2: Transparent routing (rewrite the command)**
+- [ ] Instead of blocking, rewrite the Bash command to a cmux-cli pipeline:
+  1. `cmux-cli send --enter "<command>"` — dispatch to a terminal pane
+  2. Poll with `cmux-cli surface read-text` until a shell prompt reappears (command finished) or a timeout
+  3. Return the terminal output as the Bash tool result
+- [ ] Use `updatedInput` in hook JSON output to replace the original command with the routing script
+- [ ] Handle the "command is done" detection: look for the shell prompt pattern (e.g. `$`, `#`, or `PS1`) in read-text output after the command
+- [ ] Timeout fallback: if no prompt detected after N seconds, return what's on screen with a note that the command may still be running
+
+**Phase 3: Smart routing (classify commands)**
+- [ ] Move beyond pattern matching to classify commands by behavior:
+  - **Pure reads** (git status, ls, cat) → run directly via Bash (faster, no cmux overhead)
+  - **Short writes** (git add, mv, cp) → run directly via Bash
+  - **Builds** (zig build, cargo, make, npm) → route to cmux pane (long-running, may have output to monitor)
+  - **Interactive** (ssh, apt, sudo, vim, top) → route to cmux pane (requires observation and input)
+  - **Piped/compound** (foo | bar, foo && bar) → analyze components individually
+- [ ] Learn from Bash tool timeouts: if a command times out via Bash, auto-suggest cmux routing for that pattern in future
+- [ ] Per-workspace routing: builds go to a "build" pane, SSH goes to a dedicated pane, etc.
+
+**Open questions:**
+- Should the hook create a split pane automatically, or assume one exists?
+- How to detect command completion reliably across different shells and prompts?
+- Should there be a cmux-cli command specifically for "run and wait" that handles the polling loop server-side?
+- Can the hook modify the Bash tool's timeout behavior, or only the command itself?
+
 ---
 
 ## The Dogfooding Roadmap
