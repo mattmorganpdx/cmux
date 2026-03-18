@@ -561,6 +561,7 @@ pub fn splitFocused(self: *Window, direction: PaneTree.SplitDirection) !void {
     // Focus the new terminal
     _ = c.gtk_widget_grab_focus(new_tw.widget());
 
+    self.sidebar.rebuild();
     log.info("Split created: pane {d} -> new pane {d}", .{ focused, new_pane_id });
 }
 
@@ -652,6 +653,7 @@ pub fn closeFocused(self: *Window) !void {
         }
     }
 
+    self.sidebar.rebuild();
     log.info("Pane {d} closed", .{focused});
 }
 
