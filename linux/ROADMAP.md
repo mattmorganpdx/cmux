@@ -134,12 +134,13 @@ Currently the agent has to *remember* to use cmux-cli instead of Bash. A Claude 
 
 The hook is a shell script triggered by Claude Code's `PreToolUse` event on the `Bash` tool. It receives the planned command as JSON on stdin and can block it (exit 2), allow it (exit 0), or rewrite it (JSON output with `updatedInput`).
 
-**Phase 1: Blocking hook (guide the agent)**
-- [ ] Only activates when `CMUX_SURFACE_ID` is set (agent is running inside cmux)
-- [ ] Pattern-match commands that are known to be interactive or long-running: `ssh`, `apt`, `zig build`, `cargo build`, `npm install`, `make`, `docker`, `sudo`, interactive shells, etc.
-- [ ] Block with exit 2 and a message like: `"This command may be interactive. Use cmux-cli send --enter '<command>' then cmux-cli surface read-text to check output."`
-- [ ] Allow short/safe commands through: `git`, `ls`, `cat`, `echo`, `which`, `jq`, `cmux-cli`, `cd`, `pwd`, file reads, etc.
-- [ ] Configure in `.claude/settings.json` or `.claude/settings.local.json` under `hooks.PreToolUse` with `matcher: "Bash"`
+**Phase 1: Blocking hook (guide the agent)** ✅ COMPLETE
+- [x] Only activates when `CMUX_SURFACE_ID` is set (agent is running inside cmux)
+- [x] Pattern-match commands that are known to be interactive or long-running: `ssh`, `apt install/upgrade`, `npm`, `docker`, `vim`, `python` (REPL), `top`, `mysql`, `psql`, etc.
+- [x] Block with JSON `permissionDecision: "deny"` and a message showing the cmux-cli equivalent command
+- [x] Allow short/safe commands through: `git`, `ls`, `cat`, `echo`, `which`, `jq`, `cmux-cli`, `cd`, `pwd`, `zig build`, `python3 -c`, file ops, etc.
+- [x] Configure in `.claude/settings.local.json` under `hooks.PreToolUse` with `matcher: "Bash"`
+- [x] Hook script at `.claude/hooks/route-to-cmux.sh`, 5-second timeout
 
 **Phase 2: Transparent routing (rewrite the command)**
 - [ ] Instead of blocking, rewrite the Bash command to a cmux-cli pipeline:
