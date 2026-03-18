@@ -211,6 +211,18 @@ pub const GTK_ALIGN_END = raw.GTK_ALIGN_END;
 pub const GTK_ALIGN_CENTER = raw.GTK_ALIGN_CENTER;
 pub const GTK_ALIGN_FILL = raw.GTK_ALIGN_FILL;
 
+// GType checking
+pub const GTypeInstance = raw.GTypeInstance;
+pub const g_type_is_a = raw.g_type_is_a;
+pub const gtk_paned_get_type = raw.gtk_paned_get_type;
+pub const gtk_paned_get_start_child = raw.gtk_paned_get_start_child;
+pub const gtk_paned_get_end_child = raw.gtk_paned_get_end_child;
+pub const gtk_box_get_type = raw.gtk_box_get_type;
+
+// Widget tree traversal
+pub const gtk_widget_get_first_child = raw.gtk_widget_get_first_child;
+pub const gtk_widget_get_next_sibling = raw.gtk_widget_get_next_sibling;
+
 // GLib/GObject functions
 pub const g_application_run = raw.g_application_run;
 pub const g_object_ref = raw.g_object_ref;

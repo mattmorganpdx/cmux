@@ -985,11 +985,16 @@ pub fn rebuildCurrentWorkspace(self: *Window) !void {
     const ws = self.tab_manager.selectedWorkspace() orelse return;
     const ws_box = self.workspace_boxes.get(ws.id) orelse return;
 
-    // Detach the old root widget from the workspace box
-    if (ws.pane_tree.root) |root_id| {
-        if (self.node_widgets.get(root_id)) |root_widget| {
-            c.gtk_box_remove(ws_box, root_widget);
-        }
+    // Remove ALL direct children of the workspace box.
+    // After detachPane/sibling promotion, the data model's root may differ
+    // from what's actually in the box, so we can't rely on node_widgets
+    // to find the right widget to remove.
+    const box_widget: *c.GtkWidget = @ptrCast(@alignCast(ws_box));
+    var child = c.gtk_widget_get_first_child(box_widget);
+    while (child != null) {
+        const next = c.gtk_widget_get_next_sibling(child);
+        c.gtk_box_remove(ws_box, child);
+        child = next;
     }
 
     // Clear split node widgets (pane widgets are retained)
@@ -1023,13 +1028,7 @@ fn rebuildNodeFromExisting(self: *Window, ws: *Workspace, node_id: PaneTree.Node
             const tw = self.pane_widgets.get(node_id) orelse return error.MissingWidget;
             const widget = tw.widget();
             // Unparent if it has a parent (from old tree)
-            if (c.gtk_widget_get_parent(widget) != null) {
-                const parent = c.gtk_widget_get_parent(widget);
-                const parent_paned: *c.GtkPaned = @ptrCast(parent);
-                // Clear both children to unparent
-                c.gtk_paned_set_start_child(parent_paned, null);
-                c.gtk_paned_set_end_child(parent_paned, null);
-            }
+            safeUnparent(widget);
             try self.node_widgets.put(node_id, widget);
             return widget;
         },
@@ -1061,6 +1060,29 @@ fn rebuildNodeFromExisting(self: *Window, ws: *Workspace, node_id: PaneTree.Node
             return paned_widget;
         },
     }
+}
+
+/// Safely unparent a widget from whatever container it's in.
+/// Handles GtkPaned (clears child slot), GtkBox (gtk_box_remove),
+/// and unknown parents (skips to avoid GTK-CRITICAL assertions).
+fn safeUnparent(widget: *c.GtkWidget) void {
+    const parent = c.gtk_widget_get_parent(widget) orelse return;
+    // Check if parent is a GtkPaned by comparing type
+    const paned_type = c.gtk_paned_get_type();
+    const box_type = c.gtk_box_get_type();
+    const parent_obj: *c.GTypeInstance = @ptrCast(parent);
+    const parent_type = parent_obj.g_class.*.g_type;
+    if (c.g_type_is_a(parent_type, paned_type) != 0) {
+        const parent_paned: *c.GtkPaned = @ptrCast(parent);
+        if (c.gtk_paned_get_start_child(parent_paned) == widget) {
+            c.gtk_paned_set_start_child(parent_paned, null);
+        } else if (c.gtk_paned_get_end_child(parent_paned) == widget) {
+            c.gtk_paned_set_end_child(parent_paned, null);
+        }
+    } else if (c.g_type_is_a(parent_type, box_type) != 0) {
+        c.gtk_box_remove(@ptrCast(parent), widget);
+    }
+    // For any other parent type, skip — don't risk invalid casts
 }
 
 // ------------------------------------------------------------------
