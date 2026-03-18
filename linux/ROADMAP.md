@@ -120,7 +120,7 @@ Discovered during systematic CLI test suite (all 41 commands exercised):
 
 Identified during CLI test suite:
 
-- [ ] **Synchronous dispatch for remaining mutating socket operations** — `pane.break`, `pane.swap`, `surface.split`, and `surface.close` still use async `g_idle_add` and return success before GTK executes. The `ResetEvent` pattern (now proven in `workspace.select`, `pane.join`, and `pane.resize`) should be applied to these remaining handlers so clients get real success/error responses.
+- [x] **Synchronous dispatch for all mutating socket operations** — All mutating handlers now use synchronous `ResetEvent` dispatch: `pane.break`, `pane.swap`, `surface.split`, `surface.close` (plus previously converted `workspace.select`, `pane.join`, `pane.resize`). Each returns real error codes on failure instead of fire-and-forget success.
 - [ ] **`workspace next`/`previous` should optionally wrap around** — Currently returns `at_end`/`at_start` errors. For agent use, wrapping (or a `--wrap` flag) would be more convenient than requiring the agent to handle the error and call `workspace select`.
 - [ ] **Use `jq` instead of Python for JSON parsing in agent workflows** — When parsing `cmux-cli` JSON output in shell pipelines, prefer `jq` (lightweight, purpose-built) over `python3 -c "import json..."`. Example: `cmux-cli surface read-text | jq -r '.result.text'` instead of piping through Python. `jq` should be a recommended dependency for agent environments.
 

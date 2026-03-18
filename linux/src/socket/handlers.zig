@@ -1390,6 +1390,10 @@ fn resolveKeyAction(alloc: Allocator, key_name: []const u8) ?[]const u8 {
 const SplitCtx = struct {
     window: *Window,
     direction: PaneTree.SplitDirection,
+    success: bool = false,
+    err_code: []const u8 = "internal_error",
+    err_msg: []const u8 = "Unknown error",
+    done: std.Thread.ResetEvent = .{},
 };
 
 fn handleSurfaceSplit(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
@@ -1412,15 +1416,30 @@ fn handleSurfaceSplit(alloc: Allocator, server: *Server, req: *const protocol.Re
     ctx.* = .{ .window = window, .direction = direction };
     _ = c.g_idle_add(&doSplit, @ptrCast(ctx));
 
-    return protocol.successResponse(alloc, req.id, "{\"split\":true}");
+    ctx.done.wait();
+
+    const success = ctx.success;
+    const err_code = ctx.err_code;
+    const err_msg = ctx.err_msg;
+    std.heap.c_allocator.destroy(ctx);
+
+    if (success) {
+        return protocol.successResponse(alloc, req.id, "{\"split\":true}");
+    } else {
+        return protocol.errorResponse(alloc, req.id, err_code, err_msg);
+    }
 }
 
 fn doSplit(userdata: c.gpointer) callconv(.c) c.gboolean {
     const ctx: *SplitCtx = @ptrCast(@alignCast(userdata));
-    defer std.heap.c_allocator.destroy(ctx);
+    defer ctx.done.set();
     ctx.window.splitFocused(ctx.direction) catch |err| {
         log.warn("Failed to split from socket: {}", .{err});
+        ctx.err_code = "split_failed";
+        ctx.err_msg = "Failed to create split";
+        return c.G_SOURCE_REMOVE;
     };
+    ctx.success = true;
     return c.G_SOURCE_REMOVE;
 }
 
@@ -1436,6 +1455,14 @@ fn parseDirection(dir_str: []const u8) ?PaneTree.SplitDirection {
 // surface.close — close pane via socket
 // ------------------------------------------------------------------
 
+const SurfaceCloseCtx = struct {
+    window: *Window,
+    success: bool = false,
+    err_code: []const u8 = "internal_error",
+    err_msg: []const u8 = "Unknown error",
+    done: std.Thread.ResetEvent = .{},
+};
+
 fn handleSurfaceClose(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
     const window = server.window orelse {
         return protocol.errorResponse(alloc, req.id, "no_window", "No window available");
@@ -1450,22 +1477,36 @@ fn handleSurfaceClose(alloc: Allocator, server: *Server, req: *const protocol.Re
         return protocol.errorResponse(alloc, req.id, "last_pane", "Cannot close the last pane");
     }
 
-    const ctx = std.heap.c_allocator.create(WorkspaceSwitchCtx) catch {
+    const ctx = std.heap.c_allocator.create(SurfaceCloseCtx) catch {
         return protocol.errorResponse(alloc, req.id, "internal_error", "Failed to allocate context");
     };
-    // Reuse WorkspaceSwitchCtx — we just need the window pointer
-    ctx.* = .{ .window = window, .index = 0 };
+    ctx.* = .{ .window = window };
     _ = c.g_idle_add(&doCloseSurface, @ptrCast(ctx));
 
-    return protocol.successResponse(alloc, req.id, "{\"closed\":true}");
+    ctx.done.wait();
+
+    const success = ctx.success;
+    const err_code = ctx.err_code;
+    const err_msg = ctx.err_msg;
+    std.heap.c_allocator.destroy(ctx);
+
+    if (success) {
+        return protocol.successResponse(alloc, req.id, "{\"closed\":true}");
+    } else {
+        return protocol.errorResponse(alloc, req.id, err_code, err_msg);
+    }
 }
 
 fn doCloseSurface(userdata: c.gpointer) callconv(.c) c.gboolean {
-    const ctx: *WorkspaceSwitchCtx = @ptrCast(@alignCast(userdata));
-    defer std.heap.c_allocator.destroy(ctx);
+    const ctx: *SurfaceCloseCtx = @ptrCast(@alignCast(userdata));
+    defer ctx.done.set();
     ctx.window.closeFocused() catch |err| {
         log.warn("Failed to close surface from socket: {}", .{err});
+        ctx.err_code = "close_failed";
+        ctx.err_msg = "Failed to close surface";
+        return c.G_SOURCE_REMOVE;
     };
+    ctx.success = true;
     return c.G_SOURCE_REMOVE;
 }
 
@@ -1751,6 +1792,10 @@ const PaneSwapCtx = struct {
     window: *Window,
     pane_a: PaneTree.NodeId,
     pane_b: PaneTree.NodeId,
+    success: bool = false,
+    err_code: []const u8 = "internal_error",
+    err_msg: []const u8 = "Unknown error",
+    done: std.Thread.ResetEvent = .{},
 };
 
 fn handlePaneSwap(alloc: Allocator, server: *Server, req: *const protocol.Request) ![]const u8 {
@@ -1775,18 +1820,35 @@ fn handlePaneSwap(alloc: Allocator, server: *Server, req: *const protocol.Reques
     };
     _ = c.g_idle_add(&doPaneSwap, @ptrCast(ctx));
 
-    return protocol.successResponse(alloc, req.id, "{\"swapped\":true}");
+    ctx.done.wait();
+
+    const success = ctx.success;
+    const err_code = ctx.err_code;
+    const err_msg = ctx.err_msg;
+    std.heap.c_allocator.destroy(ctx);
+
+    if (success) {
+        return protocol.successResponse(alloc, req.id, "{\"swapped\":true}");
+    } else {
+        return protocol.errorResponse(alloc, req.id, err_code, err_msg);
+    }
 }
 
 fn doPaneSwap(userdata: c.gpointer) callconv(.c) c.gboolean {
     const ctx: *PaneSwapCtx = @ptrCast(@alignCast(userdata));
-    defer std.heap.c_allocator.destroy(ctx);
+    defer ctx.done.set();
 
-    const ws = ctx.window.tab_manager.selectedWorkspace() orelse return c.G_SOURCE_REMOVE;
+    const ws = ctx.window.tab_manager.selectedWorkspace() orelse {
+        ctx.err_code = "no_workspace";
+        ctx.err_msg = "No workspace selected";
+        return c.G_SOURCE_REMOVE;
+    };
 
     // Perform data model swap
     ws.pane_tree.swap(ctx.pane_a, ctx.pane_b) catch |err| {
         log.warn("Failed to swap panes: {}", .{err});
+        ctx.err_code = "not_found";
+        ctx.err_msg = "Pane not found or cannot swap";
         return c.G_SOURCE_REMOVE;
     };
 
@@ -1804,8 +1866,12 @@ fn doPaneSwap(userdata: c.gpointer) callconv(.c) c.gboolean {
     // Rebuild GTK widget tree to reflect new layout
     ctx.window.rebuildCurrentWorkspace() catch |err| {
         log.warn("Failed to rebuild workspace after swap: {}", .{err});
+        ctx.err_code = "rebuild_failed";
+        ctx.err_msg = "Swap succeeded but failed to rebuild workspace";
+        return c.G_SOURCE_REMOVE;
     };
 
+    ctx.success = true;
     return c.G_SOURCE_REMOVE;
 }
 
@@ -1828,21 +1894,48 @@ fn handlePaneBreak(alloc: Allocator, server: *Server, req: *const protocol.Reque
     ctx.* = .{ .window = window, .pane_id = @intCast(pane_id_raw) };
     _ = c.g_idle_add(&doPaneBreak, @ptrCast(ctx));
 
-    return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+    ctx.done.wait();
+
+    const success = ctx.success;
+    const err_code = ctx.err_code;
+    const err_msg = ctx.err_msg;
+    std.heap.c_allocator.destroy(ctx);
+
+    if (success) {
+        return protocol.successResponse(alloc, req.id, "{\"ok\":true}");
+    } else {
+        return protocol.errorResponse(alloc, req.id, err_code, err_msg);
+    }
 }
 
 const PaneBreakCtx = struct {
     window: *Window,
     pane_id: PaneTree.NodeId,
+    success: bool = false,
+    err_code: []const u8 = "internal_error",
+    err_msg: []const u8 = "Unknown error",
+    done: std.Thread.ResetEvent = .{},
 };
 
 fn doPaneBreak(userdata: c.gpointer) callconv(.c) c.gboolean {
     const ctx: *PaneBreakCtx = @ptrCast(@alignCast(userdata));
-    defer std.heap.c_allocator.destroy(ctx);
+    defer ctx.done.set();
 
     ctx.window.breakPaneToNewWorkspace(ctx.pane_id) catch |err| {
+        switch (err) {
+            error.LastPane => {
+                ctx.err_code = "last_pane";
+                ctx.err_msg = "Cannot break the last pane";
+            },
+            else => {
+                ctx.err_code = "break_failed";
+                ctx.err_msg = "Failed to break pane";
+            },
+        }
         log.warn("Failed to break pane: {}", .{err});
+        return c.G_SOURCE_REMOVE;
     };
+    ctx.success = true;
 
     return c.G_SOURCE_REMOVE;
 }
