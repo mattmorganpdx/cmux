@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=cmux
+Comment=Terminal multiplexer powered by Ghostty
+Exec=cmux
+Icon=com.cmuxterm.linux
+Terminal=false
+Type=Application
+Categories=System;TerminalEmulator;
+StartupWMClass=com.cmuxterm.linux

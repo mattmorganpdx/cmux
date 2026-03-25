@@ -1,0 +1,142 @@
+# cmux Linux port — agent notes
+
+## IMPORTANT: Actively use cmux when running inside it
+
+When `CMUX_SURFACE_ID` is set (meaning you're running inside cmux), you MUST actively use `cmux-cli` — not just the Bash tool. This means:
+
+1. **At session start:** Create a named workspace for your task, report status to the sidebar.
+2. **For builds/tests:** Run them in a split pane so the main pane stays free. Use `surface read-text` to check results.
+3. **For multi-step work:** Report progress via `workspace set-progress` and `workspace add-log`.
+4. **For parallel work:** Use splits rather than running sequential commands.
+
+This is real dogfooding — the whole point of running inside cmux.
+
+## Using cmux-cli for development
+
+When cmux is running, prefer using `cmux-cli` to interact with terminal sessions rather than the raw Bash tool. This gives you persistent sessions, parallel panes, and the ability to interact with running processes.
+
+### Core workflow
+
+```bash
+# Send a command to the focused terminal pane
+cmux-cli send --enter "zig build 2>&1"
+
+# Send text with explicit Enter appended
+cmux-cli send --enter "ls -la"
+
+# Send to a specific surface by ID
+cmux-cli send --surface 3 --enter "cd /tmp"
+
+# Read the terminal output (viewport only)
+cmux-cli surface read-text
+
+# Read full scrollback buffer
+cmux-cli surface read-text --scrollback
+
+# Send keystrokes (ctrl-c, enter, tab, escape, arrow keys, etc.)
+cmux-cli surface send-key ctrl-c
+cmux-cli surface send-key enter
+
+# Target a specific surface by ID
+cmux-cli surface read-text 3 --scrollback
+cmux-cli surface send-key --surface 3 enter
+```
+
+### Parallel work with splits
+
+```bash
+# Create a split pane
+cmux-cli surface split right    # left, right, up, down
+
+# Close the focused pane
+cmux-cli surface close
+
+# Resize a pane (default amount 0.1)
+cmux-cli pane resize <pane_id> right 0.2
+
+# Swap two panes
+cmux-cli pane swap <pane_a> <pane_b>
+```
+
+### Workspace management
+
+```bash
+cmux-cli workspace create "build"     # create a named workspace
+cmux-cli workspace list               # list all workspaces
+cmux-cli workspace select <id>        # switch workspace
+cmux-cli workspace next               # cycle workspaces
+```
+
+### Observability — report status to the sidebar
+
+```bash
+cmux-cli workspace set-progress <id> 0.5 "Building..."
+cmux-cli workspace set-status <id> task "compiling"
+cmux-cli workspace add-log <id> "Build succeeded"
+cmux-cli workspace report-git <id> main --dirty
+```
+
+### Discovery
+
+```bash
+cmux-cli identify        # show focused workspace/pane context
+cmux-cli tree             # full hierarchy: windows → workspaces → panes
+cmux-cli surface list     # list all surfaces with IDs
+cmux-cli pane list        # list all panes
+```
+
+### Command palette
+
+```bash
+cmux-cli palette list                  # list all available actions
+cmux-cli palette execute <action>      # execute an action by name
+```
+
+### Claude Code integration
+
+When the `Resources/bin/claude` wrapper is in PATH before the real `claude` binary, it automatically injects hooks so Claude Code sessions report status to the cmux sidebar.
+
+```bash
+# The wrapper handles this automatically, but you can also manually:
+echo '{"session_id":"abc"}' | cmux-cli claude-hook session-start
+echo '{}' | cmux-cli claude-hook stop
+echo '{"message":"Needs approval"}' | cmux-cli claude-hook notification
+echo '{}' | cmux-cli claude-hook prompt-submit
+```
+
+The sidebar shows `claude: Running`, `claude: Permission`, `claude: Error`, `claude: Waiting`, or `claude: Attention` depending on the hook event. Desktop notifications fire on stop and notification events.
+
+### Environment
+
+Each terminal pane automatically gets these environment variables:
+- `CMUX_SURFACE_ID` — this pane's surface ID
+- `CMUX_WORKSPACE_ID` — this pane's workspace ID
+- `CMUX_SOCKET_PATH` — path to the cmux socket
+
+Socket path resolution: `CMUX_SOCKET` → `CMUX_SOCKET_PATH` → `/tmp/cmux.sock`
+
+## Building
+
+```bash
+cd linux && zig build
+```
+
+This produces two binaries in `zig-out/bin/`:
+- `cmux` — the GUI terminal (requires GTK4, libghostty, libnotify)
+- `cmux-cli` — standalone socket client (libc only)
+
+### Rebuilding libghostty
+
+If the Ghostty submodule changes, rebuild via the setup script:
+
+```bash
+cd linux && ./setup.sh
+```
+
+## Architecture
+
+- **Language:** Zig 0.14, `@cImport` for GTK4 and Ghostty C headers
+- **UI:** GTK4 (GtkApplication, GtkGLArea, GtkPaned, GtkListBox)
+- **Terminal:** Ghostty embedded apprt via `libghostty.so`
+- **Socket:** Unix domain socket, newline-delimited JSON-RPC, thread-per-client
+- **Source layout:** `src/` (GUI app), `cli/` (CLI tool), `src/socket/` (server + handlers)
